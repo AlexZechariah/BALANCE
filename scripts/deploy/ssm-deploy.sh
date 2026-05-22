@@ -214,7 +214,7 @@ docker compose -f "$COMPOSE_FILE" up -d --build --remove-orphans
 if [ "${SKIP_DB_MIGRATIONS}" = "true" ]; then
   printf 'SKIP_DB_MIGRATIONS=true — skipping database backup and Prisma migrations for rollback deployment\n'
 else
-  if [ "$APP_ENV" = 'staging' ]; then
+  if [ "$APP_ENV" = 'staging' ] || [ "$APP_ENV" = 'production' ]; then
     printf 'Creating database backup before migration...\n'
     bash "$DEPLOY_TOOLS_DIR/scripts/backup/postgres.sh"
   fi

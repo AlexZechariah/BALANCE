@@ -7,18 +7,18 @@
 # Validates dump size (> 100 bytes) to catch empty or corrupt dumps.
 # Exits non-zero if backup creation or validation fails.
 #
-# This script is staging-only in Phase 5. It refuses to run for any other
-# environment to prevent accidental production backup under the staging path.
+# This script supports both staging and production environments.
+# BACKUP_DIR and retention cleanup are scoped by APP_ENV to prevent cross-environment contamination.
 #
 # Required environment variables:
 #   COMPOSE_FILE         Path to the Docker Compose file
-#   APP_ENV              Deployment environment (must be staging)
+#   APP_ENV              Deployment environment (staging or production)
 #   POSTGRES_PASSWORD    Postgres password
 #
 # Optional environment variables (with defaults):
 #   POSTGRES_USER        Postgres user (default: balance)
 #   POSTGRES_DB          Postgres database name (default: balance)
-#   BACKUP_DIR           Backup output directory (default: /opt/swe40006-project/backups/staging)
+#   BACKUP_DIR           Backup output directory (default: /opt/swe40006-project/backups/<APP_ENV>)
 #   MIN_DUMP_SIZE        Minimum acceptable dump size in bytes (default: 100)
 
 set -euo pipefail
@@ -28,22 +28,24 @@ set -euo pipefail
 : "${APP_ENV:?APP_ENV is required}"
 : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
 
+# ── Environment allowlist ───────────────────────────────────────────────────────
+# APP_ENV must be validated before BACKUP_DIR uses it (avoid set -u unbound-variable risk).
+if [ "$APP_ENV" != "staging" ] && [ "$APP_ENV" != "production" ]; then
+  printf '[backup] APP_ENV must be staging or production, got: %s\n' "$APP_ENV" >&2
+  exit 1
+fi
+
 # ── Configurable defaults ───────────────────────────────────────────────────────
 POSTGRES_USER="${POSTGRES_USER:-balance}"
 POSTGRES_DB="${POSTGRES_DB:-balance}"
-BACKUP_DIR="${BACKUP_DIR:-/opt/swe40006-project/backups/staging}"
+BACKUP_DIR="${BACKUP_DIR:-/opt/swe40006-project/backups/${APP_ENV}}"
 MIN_DUMP_SIZE="${MIN_DUMP_SIZE:-100}"
-
-# ── Staging-only guard ──────────────────────────────────────────────────────────
-if [ "$APP_ENV" != "staging" ]; then
-  printf 'Backup script is only enabled for staging in Phase 5. APP_ENV=%s\n' "$APP_ENV" >&2
-  exit 1
-fi
 
 # ── Timestamped filename ────────────────────────────────────────────────────────
 TIMESTAMP="$(date -u +%Y%m%d-%H%M%S)"
 BACKUP_FILENAME="postgres-${APP_ENV}-${TIMESTAMP}.dump"
 BACKUP_PATH="${BACKUP_DIR}/${BACKUP_FILENAME}"
+BACKUP_PATTERN="postgres-${APP_ENV}-*.dump"
 
 # ── Create backup directory ─────────────────────────────────────────────────────
 install -d -m 0755 "$BACKUP_DIR"
@@ -78,10 +80,10 @@ if [ -f "$BACKUP_PATH" ]; then
     exit 1
   fi
 
-  printf '[backup] Retention policy: keep latest %s staging backup(s)\n' "$BACKUP_RETENTION_COUNT"
+  printf '[backup] Retention policy: keep latest %s %s backup(s)\n' "$BACKUP_RETENTION_COUNT" "$APP_ENV"
 
   mapfile -t backup_names < <(
-    find "$BACKUP_DIR" -maxdepth 1 -type f -name 'postgres-staging-*.dump' -printf '%f\n' | sort -r
+    find "$BACKUP_DIR" -maxdepth 1 -type f -name "$BACKUP_PATTERN" -printf '%f\n' | sort -r
   )
 
   removed=0
@@ -96,9 +98,9 @@ if [ -f "$BACKUP_PATH" ]; then
   done
 
   if [ "$removed" -eq 0 ]; then
-    printf '[backup] Retention: kept latest %s staging backup(s); no old backups removed\n' "$BACKUP_RETENTION_COUNT"
+    printf '[backup] Retention: kept latest %s %s backup(s); no old backups removed\n' "$BACKUP_RETENTION_COUNT" "$APP_ENV"
   else
-    printf '[backup] Retention: kept latest %s staging backup(s); removed %s old backup(s)\n' "$BACKUP_RETENTION_COUNT" "$removed"
+    printf '[backup] Retention: kept latest %s %s backup(s); removed %s old backup(s)\n' "$BACKUP_RETENTION_COUNT" "$APP_ENV" "$removed"
   fi
 else
   printf 'Backup file was not created: %s\n' "$BACKUP_PATH" >&2

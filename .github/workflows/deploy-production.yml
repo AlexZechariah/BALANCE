@@ -205,3 +205,19 @@ jobs:
         run: |
           set -euo pipefail
           APP_URL="$APP_URL" API_URL="$API_URL" SMOKE_EXPECT_ENV=production bash scripts/verify/smoke-check.sh
+
+      - name: Generate deployment manifest
+        env:
+          DEPLOY_ENVIRONMENT: production
+          DEPLOYMENT_MODE: deploy
+        run: |
+          set -euo pipefail
+          bash scripts/deploy/generate-manifest.sh
+
+      - name: Upload deployment manifest
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: production-deployment-manifest-${{ github.run_id }}
+          path: deployment-manifest.json
+          retention-days: 30
+          if-no-files-found: error
