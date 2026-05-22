@@ -69,6 +69,37 @@ if [ -f "$BACKUP_PATH" ]; then
     exit 1
   fi
   printf 'Backup created successfully: %s (%s bytes)\n' "$BACKUP_PATH" "$FILE_SIZE"
+
+  # ── Retention cleanup ─────────────────────────────────────────
+  BACKUP_RETENTION_COUNT="${BACKUP_RETENTION_COUNT:-5}"
+
+  if ! [[ "$BACKUP_RETENTION_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+    printf '[backup] BACKUP_RETENTION_COUNT must be a positive integer, got: %s\n' "$BACKUP_RETENTION_COUNT" >&2
+    exit 1
+  fi
+
+  printf '[backup] Retention policy: keep latest %s staging backup(s)\n' "$BACKUP_RETENTION_COUNT"
+
+  mapfile -t backup_names < <(
+    find "$BACKUP_DIR" -maxdepth 1 -type f -name 'postgres-staging-*.dump' -printf '%f\n' | sort -r
+  )
+
+  removed=0
+  index=0
+  for backup_name in "${backup_names[@]}"; do
+    index=$((index + 1))
+    if [ "$index" -le "$BACKUP_RETENTION_COUNT" ]; then
+      continue
+    fi
+    rm -f -- "$BACKUP_DIR/$backup_name"
+    removed=$((removed + 1))
+  done
+
+  if [ "$removed" -eq 0 ]; then
+    printf '[backup] Retention: kept latest %s staging backup(s); no old backups removed\n' "$BACKUP_RETENTION_COUNT"
+  else
+    printf '[backup] Retention: kept latest %s staging backup(s); removed %s old backup(s)\n' "$BACKUP_RETENTION_COUNT" "$removed"
+  fi
 else
   printf 'Backup file was not created: %s\n' "$BACKUP_PATH" >&2
   exit 1
