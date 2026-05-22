@@ -57,12 +57,19 @@ assert_matches() {
   fi
 }
 
+printf '[SMOKE] Checking %s...\n' "$app_root/"
 home_html="$(fetch "$app_root/")"
+printf '[SMOKE] Checking %s...\n' "$app_root/login"
 login_html="$(fetch "$app_root/login")"
+printf '[SMOKE] Checking %s...\n' "$app_root/app"
 app_html="$(fetch "$app_root/app")"
+printf '[SMOKE] Checking %s...\n' "$app_root/enterprise"
 enterprise_html="$(fetch "$app_root/enterprise")"
+printf '[SMOKE] Checking %s...\n' "$api_root$health_suffix"
 health_json="$(fetch "$api_root$health_suffix")"
+printf '[SMOKE] Checking %s...\n' "$api_root$ready_suffix"
 ready_json="$(fetch "$api_root$ready_suffix")"
+printf '[SMOKE] Checking %s...\n' "$api_root$version_suffix"
 version_json="$(fetch "$api_root$version_suffix")"
 
 assert_contains "$home_html" 'Balance'
