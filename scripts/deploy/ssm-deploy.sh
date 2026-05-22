@@ -27,6 +27,8 @@ COMPOSE_FILE="${COMPOSE_FILE:-}"
 APP_ENV="${APP_ENV:-}"
 GIT_COMMIT="${GIT_COMMIT:-}"
 BUILD_ID="${BUILD_ID:-}"
+DEPLOY_TOOLS_DIR="${DEPLOY_TOOLS_DIR:-$APP_DIR}"
+SKIP_DB_MIGRATIONS="${SKIP_DB_MIGRATIONS:-false}"
 
 require_var APP_DIR
 require_var COMPOSE_FILE
@@ -209,35 +211,39 @@ fi
 docker compose -f "$COMPOSE_FILE" down --remove-orphans
 docker compose -f "$COMPOSE_FILE" up -d --build --remove-orphans
 
-if [ "$APP_ENV" = 'staging' ]; then
-  printf 'Creating database backup before migration...\n'
-  bash scripts/backup/postgres.sh
-fi
+if [ "${SKIP_DB_MIGRATIONS}" = "true" ]; then
+  printf 'SKIP_DB_MIGRATIONS=true — skipping database backup and Prisma migrations for rollback deployment\n'
+else
+  if [ "$APP_ENV" = 'staging' ]; then
+    printf 'Creating database backup before migration...\n'
+    bash "$DEPLOY_TOOLS_DIR/scripts/backup/postgres.sh"
+  fi
 
-if [ "$APP_ENV" = 'staging' ] || [ "$APP_ENV" = 'production' ]; then
-  printf 'Applying Prisma migrations (prisma migrate deploy)...\n'
-  attempts=0
-  until docker compose -f "$COMPOSE_FILE" exec -T api pnpm prisma:deploy; do
-    attempts=$((attempts + 1))
-    if [ "$attempts" -ge 10 ]; then
-      printf 'Prisma migrate deploy failed after %s attempts\n' "$attempts" >&2
-      exit 1
-    fi
-    printf 'Prisma migrate deploy failed; retrying (%s/10)...\n' "$attempts" >&2
-    sleep 3
-  done
+  if [ "$APP_ENV" = 'staging' ] || [ "$APP_ENV" = 'production' ]; then
+    printf 'Applying Prisma migrations (prisma migrate deploy)...\n'
+    attempts=0
+    until docker compose -f "$COMPOSE_FILE" exec -T api pnpm prisma:deploy; do
+      attempts=$((attempts + 1))
+      if [ "$attempts" -ge 10 ]; then
+        printf 'Prisma migrate deploy failed after %s attempts\n' "$attempts" >&2
+        exit 1
+      fi
+      printf 'Prisma migrate deploy failed; retrying (%s/10)...\n' "$attempts" >&2
+      sleep 3
+    done
 
-  printf 'Applying Prisma seed (idempotent)...\n'
-  attempts=0
-  until docker compose -f "$COMPOSE_FILE" exec -T api pnpm prisma:seed; do
-    attempts=$((attempts + 1))
-    if [ "$attempts" -ge 10 ]; then
-      printf 'Prisma seed failed after %s attempts\n' "$attempts" >&2
-      exit 1
-    fi
-    printf 'Prisma seed failed; retrying (%s/10)...\n' "$attempts" >&2
-    sleep 3
-  done
+    printf 'Applying Prisma seed (idempotent)...\n'
+    attempts=0
+    until docker compose -f "$COMPOSE_FILE" exec -T api pnpm prisma:seed; do
+      attempts=$((attempts + 1))
+      if [ "$attempts" -ge 10 ]; then
+        printf 'Prisma seed failed after %s attempts\n' "$attempts" >&2
+        exit 1
+      fi
+      printf 'Prisma seed failed; retrying (%s/10)...\n' "$attempts" >&2
+      sleep 3
+    done
+  fi
 fi
 
 docker compose -f "$COMPOSE_FILE" ps

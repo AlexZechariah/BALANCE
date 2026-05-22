@@ -32,15 +32,34 @@ set -euo pipefail
 : "${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY is required}"
 
 environment="${DEPLOY_ENVIRONMENT:-staging}"
+deployment_mode="${DEPLOYMENT_MODE:-deploy}"
 smoke_status="passed"
 deployed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 workflow_run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+# Set backup and deployment mode status
+if [ "$deployment_mode" = "rollback" ]; then
+  backup_status="skipped"
+  backup_scope="not_applicable"
+  backup_format="not_applicable"
+else
+  backup_status="created"
+  backup_scope="pre_migration"
+  backup_format="pg_dump_custom"
+fi
+
+# Human-readable backup format for the summary table
+backup_format_summary="$backup_format"
+if [ "$backup_format" = "pg_dump_custom" ]; then
+  backup_format_summary="pg_dump custom"
+fi
 
 # Generate deployment manifest JSON
 jq --null-input \
   --arg environment "$environment" \
   --arg branch "$GITHUB_REF_NAME" \
   --arg commit "$GITHUB_SHA" \
+  --arg deployment_mode "$deployment_mode" \
   --arg run_id "$GITHUB_RUN_ID" \
   --arg workflow_name "$GITHUB_WORKFLOW" \
   --arg workflow_run_id "$GITHUB_RUN_ID" \
@@ -51,13 +70,16 @@ jq --null-input \
   --arg deployed_at "$deployed_at" \
   --argjson endpoint_values_redacted true \
   --argjson routes_verified '["/","/login","/app","/enterprise","/api/health","/api/ready","/api/version"]' \
-  --arg backup_status "created" \
-  --arg backup_scope "pre_migration" \
-  --arg backup_format "pg_dump_custom" \
+  --arg backup_status "$backup_status" \
+  --arg backup_scope "$backup_scope" \
+  --arg backup_format "$backup_format" \
+  --arg target_revision "${TARGET_REVISION:-}" \
+  --arg rollback_requested_by "${ROLLBACK_REQUESTED_BY:-}" \
   '{
     environment: $environment,
     branch: $branch,
     commit: $commit,
+    deployment_mode: $deployment_mode,
     run_id: $run_id,
     workflow_name: $workflow_name,
     workflow_run_id: $workflow_run_id,
@@ -73,7 +95,16 @@ jq --null-input \
     backup_scope: $backup_scope,
     backup_format: $backup_format,
     deployed_at: $deployed_at
-  }' > deployment-manifest.json
+  }
+  +
+  if $deployment_mode == "rollback" then
+  {
+    target_revision: $target_revision,
+    rollback_requested_by: $rollback_requested_by,
+    rollback_skip_db_migrations: true,
+    rollback_database_restore: "not_performed"
+  }
+  else {} end' > deployment-manifest.json
 
 # Write markdown summary to GITHUB_STEP_SUMMARY
 {
@@ -89,10 +120,17 @@ jq --null-input \
   printf '| App endpoint | Configured through APP_URL |\n'
   printf '| API endpoint | Configured through API_URL |\n'
   printf '| Endpoint values | Redacted |\n'
+  printf '| Deployment mode | %s |\n' "$deployment_mode"
   printf '| Routes verified | /, /login, /app, /enterprise, /api/health, /api/ready, /api/version |\n'
   printf '| Smoke status | passed |\n'
-  printf '| DB backup status | created |\n'
-  printf '| DB backup scope | pre_migration |\n'
-  printf '| DB backup format | pg_dump custom |\n'
+  printf '| DB backup status | %s |\n' "$backup_status"
+  printf '| DB backup scope | %s |\n' "$backup_scope"
+  printf '| DB backup format | %s |\n' "$backup_format_summary"
   printf '| Deployed at | %s |\n' "$deployed_at"
+  if [ "$deployment_mode" = "rollback" ]; then
+    printf '| Target revision | %s |\n' "${TARGET_REVISION:-unavailable}"
+    printf '| Requested by | %s |\n' "${ROLLBACK_REQUESTED_BY:-unavailable}"
+    printf '| DB migrations | Skipped |\n'
+    printf '| DB restore | Not performed |\n'
+  fi
 } >> "$GITHUB_STEP_SUMMARY"
