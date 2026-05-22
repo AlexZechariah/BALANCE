@@ -209,6 +209,11 @@ fi
 docker compose -f "$COMPOSE_FILE" down --remove-orphans
 docker compose -f "$COMPOSE_FILE" up -d --build --remove-orphans
 
+if [ "$APP_ENV" = 'staging' ]; then
+  printf 'Creating database backup before migration...\n'
+  bash scripts/backup/postgres.sh
+fi
+
 if [ "$APP_ENV" = 'staging' ] || [ "$APP_ENV" = 'production' ]; then
   printf 'Applying Prisma migrations (prisma migrate deploy)...\n'
   attempts=0

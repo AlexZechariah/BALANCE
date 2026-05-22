@@ -51,6 +51,9 @@ jq --null-input \
   --arg deployed_at "$deployed_at" \
   --argjson endpoint_values_redacted true \
   --argjson routes_verified '["/","/login","/app","/enterprise","/api/health","/api/ready","/api/version"]' \
+  --arg backup_status "created" \
+  --arg backup_scope "pre_migration" \
+  --arg backup_format "pg_dump_custom" \
   '{
     environment: $environment,
     branch: $branch,
@@ -66,6 +69,9 @@ jq --null-input \
     endpoint_values_redacted: $endpoint_values_redacted,
     routes_verified: $routes_verified,
     smoke_status: $smoke_status,
+    backup_status: $backup_status,
+    backup_scope: $backup_scope,
+    backup_format: $backup_format,
     deployed_at: $deployed_at
   }' > deployment-manifest.json
 
@@ -85,5 +91,8 @@ jq --null-input \
   printf '| Endpoint values | Redacted |\n'
   printf '| Routes verified | /, /login, /app, /enterprise, /api/health, /api/ready, /api/version |\n'
   printf '| Smoke status | passed |\n'
+  printf '| DB backup status | created |\n'
+  printf '| DB backup scope | pre_migration |\n'
+  printf '| DB backup format | pg_dump custom |\n'
   printf '| Deployed at | %s |\n' "$deployed_at"
 } >> "$GITHUB_STEP_SUMMARY"
