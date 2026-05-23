@@ -8,11 +8,15 @@ import { useAuth } from '../context/auth-context';
 import { Button } from './ui/button';
 import { ThemeToggle } from './theme-toggle';
 import { cn } from '@/lib/utils';
+import { EnvironmentBadge } from './system/environment-badge';
+import { AppFooter } from './system/app-footer';
+import { useSystemStatus } from '../hooks/use-system-status';
 
 export function ConsumerLayout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
+  const { environment } = useSystemStatus();
 
   async function handleLogout() {
     await logout();
@@ -30,7 +34,7 @@ export function ConsumerLayout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
       <header className="sticky top-0 z-40 border-b border-border bg-background/92 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 lg:px-6">
           <div className="flex min-w-0 items-center gap-5">
@@ -38,6 +42,7 @@ export function ConsumerLayout({ children }: { children: ReactNode }) {
               <ReceiptText className="size-5 text-primary" />
               <span className="text-base tracking-normal">Balance</span>
             </Link>
+            <EnvironmentBadge environment={environment} />
             <nav className="hidden gap-1 md:flex">
               {navLinks.map((link) => (
                 <Button key={link.href} asChild variant="ghost" size="sm">
@@ -67,7 +72,8 @@ export function ConsumerLayout({ children }: { children: ReactNode }) {
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-7xl px-4 py-6 lg:px-6">{children}</main>
+      <main className="mx-auto max-w-7xl px-4 py-6 lg:px-6 flex-1 w-full">{children}</main>
+      <AppFooter />
     </div>
   );
 }
