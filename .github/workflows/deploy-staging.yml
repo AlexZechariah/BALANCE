@@ -47,7 +47,7 @@ jobs:
       SEED_ADMIN_PASSWORD: ${{ secrets.STAGING_SEED_ADMIN_PASSWORD }}
       GIT_COMMIT: ${{ github.sha }}
       BUILD_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
-      APP_VERSION: ${{ vars.APP_VERSION || '0.4.0' }}
+      APP_VERSION: ${{ vars.APP_VERSION || '0.4.1' }}
       GH_PAT: ${{ secrets.GH_PAT }}
       REPOSITORY_URL: https://github.com/Alex-Zechariah-02/SWE40006-Project.git
       COMPOSE_FILE: infra/compose/compose.staging.yml

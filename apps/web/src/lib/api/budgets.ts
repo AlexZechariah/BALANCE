@@ -1,9 +1,10 @@
-import type { BudgetSummary } from '@balance/types';
+import type { BudgetCategorySpendSummary, BudgetSummary } from '@balance/types';
 import { apiRequest } from './client';
 
 export type Budget = BudgetSummary;
+export type BudgetCategorySpend = BudgetCategorySpendSummary;
 
-export async function listBudgets(month?: string): Promise<{ month: string; budgets: Budget[] }> {
+export async function listBudgets(month?: string): Promise<{ month: string; budgets: Budget[]; unbudgetedCategories: BudgetCategorySpend[] }> {
   const qs = month ? `?month=${encodeURIComponent(month)}` : '';
   return apiRequest(`/budgets${qs}`);
 }
@@ -11,6 +12,7 @@ export async function listBudgets(month?: string): Promise<{ month: string; budg
 export async function createBudget(input: {
   category: string;
   amountMinor: number;
+  month?: string;
   currency?: string;
 }): Promise<{ budget: Budget }> {
   return apiRequest('/budgets', {

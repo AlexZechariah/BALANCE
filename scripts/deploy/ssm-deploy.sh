@@ -138,7 +138,7 @@ export PROJECT_SLUG="${PROJECT_SLUG:-balance}"
 export DEPLOYMENT_NAMESPACE="${DEPLOYMENT_NAMESPACE:-swe40006-project}"
 export APP_ENV
 export NODE_ENV="${NODE_ENV:-production}"
-export APP_VERSION="${APP_VERSION:-0.4.0}"
+export APP_VERSION="${APP_VERSION:-0.4.1}"
 export GIT_COMMIT
 export BUILD_ID
 export GH_PAT

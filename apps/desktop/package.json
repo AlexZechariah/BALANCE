@@ -1,6 +1,6 @@
 {
   "name": "@balance/desktop",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "scripts": {
     "build": "pnpm exec tsc -p tsconfig.main.json && pnpm exec vite build",

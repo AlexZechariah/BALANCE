@@ -15,7 +15,7 @@ describe('loadAppConfig', () => {
       apiBasePath: '/api',
       apiHealthPath: '/api/health',
       apiVersionPath: '/api/version',
-      appVersion: '0.4.0',
+      appVersion: '0.4.1',
       gitCommit: 'local',
       buildId: 'local-build'
     });

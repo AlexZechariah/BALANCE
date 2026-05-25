@@ -27,9 +27,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { createBudget, deleteBudget, listBudgets, updateBudget, type Budget } from '@/lib/api/budgets';
+import { createBudget, deleteBudget, listBudgets, updateBudget, type Budget, type BudgetCategorySpend } from '@/lib/api/budgets';
 import { BalanceApiError } from '@/lib/api/client';
-import { getDocumentInsights, type DocumentInsights } from '@/lib/api/documents';
 import { balanceCategories, categoryLabel } from '@/lib/display-labels';
 import { formatMoney } from '@/lib/format';
 
@@ -47,7 +46,7 @@ function BudgetContent() {
   const [month, setMonth] = useState('');
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [category, setCategory] = useState('restaurant');
-  const [categorySpend, setCategorySpend] = useState<DocumentInsights['categorySpend']>([]);
+  const [unbudgetedCategories, setUnbudgetedCategories] = useState<BudgetCategorySpend[]>([]);
   const [amount, setAmount] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -59,15 +58,16 @@ function BudgetContent() {
     setLoading(true);
     setError(null);
     try {
-      const [response, insightsResponse] = await Promise.all([
-        listBudgets(nextMonth || undefined),
-        getDocumentInsights(),
-      ]);
+      const response = await listBudgets(nextMonth || undefined);
       setMonth(response.month);
       setBudgets(response.budgets);
-      setCategorySpend(insightsResponse.insights.categorySpend);
+      setUnbudgetedCategories(response.unbudgetedCategories);
+      const budgeted = new Set(response.budgets.map((budget) => budget.category));
+      setCategory((current) => budgeted.has(current) ? balanceCategories.find((value) => !budgeted.has(value)) ?? current : current);
+      return response;
     } catch (err) {
       setError(err instanceof BalanceApiError ? err.error.message : 'Failed to load budgets.');
+      return null;
     } finally {
       setLoading(false);
     }
@@ -87,9 +87,14 @@ function BudgetContent() {
 
     setSaving(true);
     try {
-      const response = await createBudget({ category, amountMinor: parsed });
-      setBudgets((items) => [...items.filter((item) => item.id !== response.budget.id), response.budget].sort((a, b) => a.category.localeCompare(b.category)));
-      setCategory('restaurant');
+      const response = await createBudget({
+        category,
+        amountMinor: parsed,
+        ...(month ? { month } : {})
+      });
+      const next = await load(response.budget.month);
+      const budgetedCategories = new Set(next?.budgets.map((budget) => budget.category) ?? [response.budget.category]);
+      setCategory(balanceCategories.find((value) => !budgetedCategories.has(value)) ?? 'restaurant');
       setAmount('');
       setNotice('Budget added.');
     } catch (err) {
@@ -109,7 +114,7 @@ function BudgetContent() {
     setError(null);
     try {
       const response = await updateBudget(budget.id, { amountMinor: parsed });
-      setBudgets((items) => items.map((item) => item.id === budget.id ? response.budget : item));
+      await load(response.budget.month);
       setNotice('Budget updated.');
     } catch (err) {
       setError(err instanceof BalanceApiError ? err.error.message : 'Failed to update budget.');
@@ -123,8 +128,9 @@ function BudgetContent() {
     setSaving(true);
     setError(null);
     try {
+      const nextMonth = deleteTarget.month;
       await deleteBudget(deleteTarget.id);
-      setBudgets((items) => items.filter((item) => item.id !== deleteTarget.id));
+      await load(nextMonth);
       setDeleteTarget(null);
       setNotice('Budget deleted.');
     } catch (err) {
@@ -139,7 +145,6 @@ function BudgetContent() {
   const remainingMinor = totalBudgetMinor - totalActualMinor;
   const overBudgetMinor = budgets.reduce((sum, budget) => sum + (budget.remainingMinor < 0 ? Math.abs(budget.remainingMinor) : 0), 0);
   const budgetedCategories = new Set(budgets.map((budget) => budget.category));
-  const unbudgetedCategories = categorySpend.filter((item) => item.amountMinor > 0 && !budgetedCategories.has(item.category));
   const unbudgetedMinor = unbudgetedCategories.reduce((sum, item) => sum + item.amountMinor, 0);
   const monthLabel = formatBudgetMonth(month);
 
@@ -251,7 +256,7 @@ function BudgetContent() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete budget?</AlertDialogTitle>
             <AlertDialogDescription>
-              This removes the {deleteTarget ? categoryLabel(deleteTarget.category) : ''} budget for the current month. Captured documents are not changed.
+              This removes the {deleteTarget ? categoryLabel(deleteTarget.category) : ''} budget for {deleteTarget ? formatBudgetMonth(deleteTarget.month) : 'the selected month'}. Captured documents are not changed.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

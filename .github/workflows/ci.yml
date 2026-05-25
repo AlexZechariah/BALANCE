@@ -62,7 +62,7 @@ jobs:
       SEED_CONSUMER_PASSWORD: ci-consumer-password
       SEED_REVIEWER_PASSWORD: ci-reviewer-password
       SEED_ADMIN_PASSWORD: ci-admin-password
-      APP_VERSION: ${{ vars.APP_VERSION || '0.4.0' }}
+      APP_VERSION: ${{ vars.APP_VERSION || '0.4.1' }}
 
     steps:
       - name: Check out repository
