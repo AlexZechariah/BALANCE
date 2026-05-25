@@ -98,7 +98,7 @@ function EnterpriseDocumentsContent() {
       <div className="grid gap-5">
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
           <div>
-            <p className="text-sm text-muted-foreground">Enterprise workspace</p>
+            <p className="text-sm text-muted-foreground">Enterprise records</p>
             <h1 className="mt-1 text-3xl font-semibold tracking-tight">Documents</h1>
           </div>
           <Button asChild>

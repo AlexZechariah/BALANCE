@@ -4,6 +4,17 @@ import type { ClaimStatus, DocumentStatus, Prisma, Role } from '@balance/db';
 import { PrismaService } from '../prisma/prisma.service';
 import { throwContractHttpError } from '../common/contract-errors';
 
+function isPrismaKnownErrorCode(error: unknown, code: string): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: unknown }).code === code;
+}
+
+function prismaTargetIncludes(error: unknown, targetName: string): boolean {
+  if (typeof error !== 'object' || error === null || !('meta' in error)) return false;
+  const target = (error as { meta?: { target?: unknown } }).meta?.target;
+  if (Array.isArray(target)) return target.includes(targetName);
+  return typeof target === 'string' && target.includes(targetName);
+}
+
 @Injectable()
 export class EnterpriseService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
@@ -13,12 +24,37 @@ export class EnterpriseService {
     return `${password}${pepper}`;
   }
 
-  async createMember(adminId: string, email: string, password: string, displayName: string, role: string) {
-    // Find the admin user to get their organizationId
+  private async requireOrgAdmin(adminId: string) {
     const admin = await this.prisma.user.findUnique({ where: { id: adminId } });
     if (!admin || admin.role !== 'admin' || !admin.organizationId) {
-      throwContractHttpError(403, 'FORBIDDEN', 'Only enterprise admins can create members', []);
+      throwContractHttpError(403, 'FORBIDDEN', 'Only enterprise admins can manage members', []);
     }
+    return { ...admin, organizationId: admin.organizationId };
+  }
+
+  private async requireOrgMember(memberId: string, organizationId: string) {
+    const member = await this.prisma.user.findUnique({ where: { id: memberId } });
+    if (!member || member.organizationId !== organizationId) {
+      throwContractHttpError(404, 'NOT_FOUND', 'Member not found', []);
+    }
+    return member;
+  }
+
+  private async assertNotLastAdmin(memberId: string, organizationId: string, nextRole: Role) {
+    const member = await this.requireOrgMember(memberId, organizationId);
+    if (member.role === 'admin' && nextRole !== 'admin') {
+      const adminCount = await this.prisma.user.count({
+        where: { organizationId, role: 'admin' }
+      });
+      if (adminCount <= 1) {
+        throwContractHttpError(409, 'CONFLICT', 'Cannot demote the last admin', []);
+      }
+    }
+    return member;
+  }
+
+  async createMember(adminId: string, email: string, password: string, displayName: string, role: string) {
+    const admin = await this.requireOrgAdmin(adminId);
 
     // Check for existing email
     const existing = await this.prisma.user.findUnique({ where: { email } });
@@ -53,10 +89,7 @@ export class EnterpriseService {
   }
 
   async listMembers(adminId: string) {
-    const admin = await this.prisma.user.findUnique({ where: { id: adminId } });
-    if (!admin || admin.role !== 'admin' || !admin.organizationId) {
-      throwContractHttpError(403, 'FORBIDDEN', 'Only enterprise admins can list members', []);
-    }
+    const admin = await this.requireOrgAdmin(adminId);
 
     const members = await this.prisma.user.findMany({
       where: { organizationId: admin.organizationId },
@@ -75,15 +108,8 @@ export class EnterpriseService {
   }
 
   async deleteMember(adminId: string, memberId: string) {
-    const admin = await this.prisma.user.findUnique({ where: { id: adminId } });
-    if (!admin || admin.role !== 'admin' || !admin.organizationId) {
-      throwContractHttpError(403, 'FORBIDDEN', 'Only enterprise admins can delete members', []);
-    }
-
-    const member = await this.prisma.user.findUnique({ where: { id: memberId } });
-    if (!member || member.organizationId !== admin.organizationId) {
-      throwContractHttpError(404, 'NOT_FOUND', 'Member not found', []);
-    }
+    const admin = await this.requireOrgAdmin(adminId);
+    const member = await this.requireOrgMember(memberId, admin.organizationId);
 
     if (member.id === admin.id) {
       throwContractHttpError(403, 'FORBIDDEN', 'Cannot delete your own account', []);
@@ -99,29 +125,14 @@ export class EnterpriseService {
   }
 
   async updateMemberRole(adminId: string, memberId: string, role: string | undefined) {
-    const admin = await this.prisma.user.findUnique({ where: { id: adminId } });
-    if (!admin || admin.role !== 'admin' || !admin.organizationId) {
-      throwContractHttpError(403, 'FORBIDDEN', 'Only enterprise admins can update members', []);
-    }
-
-    const member = await this.prisma.user.findUnique({ where: { id: memberId } });
-    if (!member || member.organizationId !== admin.organizationId) {
-      throwContractHttpError(404, 'NOT_FOUND', 'Member not found', []);
-    }
+    const admin = await this.requireOrgAdmin(adminId);
 
     const normalizedRole = (role || '').trim().toLowerCase();
     if (!['staff', 'reviewer', 'admin'].includes(normalizedRole)) {
       throwContractHttpError(422, 'VALIDATION_ERROR', 'Role must be staff, reviewer, or admin', [{ path: 'role', message: 'Invalid role' }]);
     }
 
-    if (member.role === 'admin' && normalizedRole === 'staff') {
-      const adminCount = await this.prisma.user.count({
-        where: { organizationId: admin.organizationId, role: 'admin' }
-      });
-      if (adminCount <= 1) {
-        throwContractHttpError(409, 'CONFLICT', 'Cannot demote the last admin', []);
-      }
-    }
+    await this.assertNotLastAdmin(memberId, admin.organizationId, normalizedRole as Role);
 
     const updated = await this.prisma.user.update({
       where: { id: memberId },
@@ -130,6 +141,55 @@ export class EnterpriseService {
     });
 
     return { member: updated };
+  }
+
+  async updateMember(
+    adminId: string,
+    memberId: string,
+    input: { displayName?: string | undefined; email?: string | undefined; role?: string | undefined }
+  ) {
+    const admin = await this.requireOrgAdmin(adminId);
+    const normalizedRole = input.role?.trim().toLowerCase();
+    if (normalizedRole && !['staff', 'reviewer', 'admin'].includes(normalizedRole)) {
+      throwContractHttpError(422, 'VALIDATION_ERROR', 'Role must be staff, reviewer, or admin', [{ path: 'role', message: 'Invalid role' }]);
+    }
+
+    const member = normalizedRole
+      ? await this.assertNotLastAdmin(memberId, admin.organizationId, normalizedRole as Role)
+      : await this.requireOrgMember(memberId, admin.organizationId);
+
+    const data: { displayName?: string; email?: string; role?: Role } = {};
+    if (input.displayName !== undefined) data.displayName = input.displayName;
+    if (input.email !== undefined && input.email !== member.email) data.email = input.email;
+    if (normalizedRole) data.role = normalizedRole as Role;
+
+    const updated = await this.prisma.user.update({
+      where: { id: memberId },
+      data,
+      select: { id: true, email: true, displayName: true, role: true, organizationId: true, createdAt: true }
+    }).catch((error: unknown) => {
+      if (isPrismaKnownErrorCode(error, 'P2002') && prismaTargetIncludes(error, 'email')) {
+        throwContractHttpError(409, 'AUTH_EMAIL_EXISTS', 'A user with this email already exists', []);
+      }
+      throw error;
+    });
+
+    return { member: updated };
+  }
+
+  async resetMemberPassword(adminId: string, memberId: string, password: string) {
+    const admin = await this.requireOrgAdmin(adminId);
+    const member = await this.requireOrgMember(memberId, admin.organizationId);
+    if (member.id === admin.id) {
+      throwContractHttpError(403, 'FORBIDDEN', 'Use account settings to change your own password', []);
+    }
+
+    await this.prisma.user.update({
+      where: { id: memberId },
+      data: { passwordHash: await bcrypt.hash(this.peppered(password), 10) }
+    });
+
+    return { ok: true };
   }
 
   async listClaims(input: {

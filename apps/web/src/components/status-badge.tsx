@@ -1,4 +1,5 @@
 import { Badge } from '@/components/ui/badge';
+import { statusLabel } from '@/lib/display-labels';
 
 const statusVariants: Record<string, 'default' | 'success' | 'warning' | 'danger' | 'info' | 'neutral'> = {
   uploaded: 'neutral',
@@ -21,9 +22,9 @@ export function StatusBadge({ status }: { status: string }) {
   return (
     <Badge
       variant={statusVariants[status] ?? 'default'}
-      className="min-w-24 justify-center whitespace-nowrap capitalize"
+      className="min-h-9 min-w-24 justify-center whitespace-nowrap px-3"
     >
-      {status.replace(/_/g, ' ')}
+      {statusLabel(status)}
     </Badge>
   );
 }

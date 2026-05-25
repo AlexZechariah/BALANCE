@@ -27,11 +27,31 @@ export type ClaimStatus = (typeof CLAIM_STATUSES)[number];
 export const REVIEW_STATUSES = ['pending', 'in_review', 'approved', 'rejected'] as const;
 export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
 
-export const ENTITY_TYPES = ['document', 'extraction_job', 'claim', 'review'] as const;
+export const ENTITY_TYPES = ['document', 'extraction_job', 'claim', 'review', 'budget'] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
 export const EXTRACTION_PROVIDERS = ['textract'] as const;
 export type ExtractionProvider = (typeof EXTRACTION_PROVIDERS)[number];
+
+export const BALANCE_CATEGORIES = [
+  'restaurant',
+  'grocery',
+  'travel',
+  'software',
+  'hardware',
+  'utilities',
+  'transport',
+  'medical',
+  'education',
+  'other'
+] as const;
+export type BalanceCategory = (typeof BALANCE_CATEGORIES)[number];
+
+export const CONSUMER_RECORD_TYPES = ['tax', 'warranty', 'return', 'personal', 'reimbursement'] as const;
+export type ConsumerRecordType = (typeof CONSUMER_RECORD_TYPES)[number];
+
+export const ENTERPRISE_CLAIM_INTENTS = ['reimbursement', 'warranty', 'tax', 'policy_review'] as const;
+export type EnterpriseClaimIntent = (typeof ENTERPRISE_CLAIM_INTENTS)[number];
 
 export const FIELD_NAMES = [
   'merchantName',
@@ -131,8 +151,26 @@ export const AUDIT_ACTIONS = [
   'review.approved',
   'review.rejected',
   'documents.bulk_deleted',
+  'budget.created',
+  'budget.updated',
+  'budget.deleted',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
+
+export interface BudgetSummary {
+  id: string;
+  userId: string;
+  category: string;
+  month: string;
+  amountMinor: number;
+  actualMinor: number;
+  remainingMinor: number;
+  currency: string;
+  documentCount: number;
+  isOverBudget: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface AppConfig {
   appName: string;

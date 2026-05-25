@@ -240,7 +240,7 @@ export function ClaimDecisionControls({
             Claim is in draft
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Submit the claim from the document workspace
+            Submit the claim from the document record
           </p>
         </CardContent>
       </Card>

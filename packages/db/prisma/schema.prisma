@@ -169,6 +169,7 @@ enum EntityType {
   extraction_job
   claim
   review
+  budget
 }
 
 model User {
@@ -182,6 +183,7 @@ model User {
   documents  Document[]   @relation("UserDocuments")
   claims     Claim[]      @relation("UserClaims")
   reviews    Review[]     @relation("UserReviews")
+  budgets    Budget[]     @relation("UserBudgets")
   auditEvents AuditEvent[] @relation("UserAuditEvents")
   organization Organization? @relation("OrgMembers", fields: [organizationId], references: [id])
 
@@ -343,6 +345,24 @@ model Claim {
   @@index([consumerId])
   @@index([organizationId])
   @@index([status])
+}
+
+model Budget {
+  id          String @id @default(uuid()) @db.Uuid
+  userId      String @db.Uuid
+  category    String
+  month       String
+  amountMinor Int
+  currency    String @default("MYR")
+
+  user User @relation("UserBudgets", fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, category, month])
+  @@index([userId, month])
+  @@index([category])
 }
 
 model Review {

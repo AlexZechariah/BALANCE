@@ -37,10 +37,10 @@ export function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-/** Split on word separators (., _, space) and capitalize each word. */
+/** Split on word separators (., _, -, space) and capitalize each word. */
 export function titleCase(s: string): string {
   if (!s) return s;
-  return s.split(/[._\s]+/).filter(Boolean).map(capitalize).join(' ');
+  return s.split(/[._\-\s]+/).filter(Boolean).map(capitalize).join(' ');
 }
 
 export function formatPercent(value: number | null | undefined): string {

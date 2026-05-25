@@ -109,7 +109,6 @@ services:
   # relative to the project directory (repo root). That is correct: <root>/tmp/balance-storage.
   # Do NOT use ../../tmp/balance-storage here — that goes up from the project directory, not
   # from the compose file's directory, producing a completely wrong host path on Windows.
-
   worker-aws:
     profiles: ['aws']
     extends:

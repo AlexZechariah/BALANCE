@@ -29,8 +29,8 @@
   --color-accent-foreground: var(--accent-foreground);
   --font-sans: var(--font-figtree);
   --font-mono: var(--font-jetbrains-mono);
-  --font-serif: var(--font-spectral);
-  --font-display: var(--font-spectral);
+  --font-serif: var(--font-figtree);
+  --font-display: var(--font-figtree);
 }
 
 :root {

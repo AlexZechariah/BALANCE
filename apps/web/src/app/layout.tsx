@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { Figtree, JetBrains_Mono, Spectral } from 'next/font/google';
+import { Figtree, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import { AuthProvider } from '../context/auth-context';
 import { MotionProvider } from '../components/motion-provider';
@@ -8,20 +8,13 @@ import { Toaster } from 'sonner';
 
 export const metadata: Metadata = {
   title: 'Balance',
-  description: 'Document intelligence workspace for receipts, invoices, claims, review, and audit',
+  description: 'Document intelligence for receipts, invoices, review queues, spend insights, and audit trails',
 };
 
 const figtree = Figtree({
   subsets: ['latin'],
   weight: ['400', '500', '600', '700'],
   variable: '--font-figtree',
-  display: 'swap',
-});
-
-const spectral = Spectral({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
-  variable: '--font-spectral',
   display: 'swap',
 });
 
@@ -35,7 +28,7 @@ const jetbrainsMono = JetBrains_Mono({
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${figtree.variable} ${spectral.variable} ${jetbrainsMono.variable}`}>
+      <body className={`${figtree.variable} ${jetbrainsMono.variable}`}>
         <ThemeProvider>
           <MotionProvider>
             <AuthProvider>{children}</AuthProvider>

@@ -131,7 +131,7 @@ export function ClaimReviewPanel({
   return (
     <Card className="overflow-hidden">
       <CardHeader>
-        <CardTitle>Extracted fields</CardTitle>
+        <CardTitle>Extracted Fields</CardTitle>
       </CardHeader>
       <Separator />
       <CardContent className="p-4">

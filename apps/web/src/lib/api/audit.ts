@@ -46,6 +46,9 @@ export interface AuditSummary {
   byAction: Array<{ action: string; count: number }>;
   byEntityType: Array<{ entityType: string; count: number }>;
   byActorRole: Array<{ actorRole: string; count: number }>;
+  failedExtractions: number;
+  destructiveChanges: number;
+  activeActorRoles: number;
   recentFailures: AuditEvent[];
 }
 

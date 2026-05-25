@@ -1,5 +1,12 @@
-import { Body, Controller, Get, HttpCode, Inject, Post, UseGuards } from '@nestjs/common';
-import { loginRequestSchema, registerRequestSchema, type LoginRequest, type RegisterRequest } from '@balance/schemas';
+import { Body, Controller, Get, HttpCode, Inject, Patch, Post, UseGuards } from '@nestjs/common';
+import {
+  accountUpdateRequestSchema,
+  loginRequestSchema,
+  registerRequestSchema,
+  type AccountUpdateRequest,
+  type LoginRequest,
+  type RegisterRequest
+} from '@balance/schemas';
 
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 
@@ -27,6 +34,15 @@ export class AuthController {
   @UseGuards(AuthGuard)
   async me(@CurrentUser() user: { id: string }) {
     return this.auth.me(user.id);
+  }
+
+  @Patch('me')
+  @UseGuards(AuthGuard)
+  async updateMe(
+    @Body(new ZodValidationPipe(accountUpdateRequestSchema)) body: AccountUpdateRequest,
+    @CurrentUser() user: { id: string }
+  ) {
+    return this.auth.updateAccount(user.id, body);
   }
 
   @Post('logout')

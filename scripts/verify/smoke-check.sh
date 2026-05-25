@@ -73,9 +73,9 @@ printf '[SMOKE] Checking %s...\n' "$api_root$version_suffix"
 version_json="$(fetch "$api_root$version_suffix")"
 
 assert_contains "$home_html" 'Balance'
-assert_contains "$home_html" 'Balance workspace'
-assert_contains "$home_html" 'Textract-first'
-assert_contains "$home_html" 'Enter workspace'
+assert_contains "$home_html" 'Evidence-ready document review'
+assert_contains "$home_html" 'Open Balance'
+assert_contains "$home_html" 'Document Information'
 assert_contains "$login_html" 'Sign in'
 assert_contains "$login_html" 'Email'
 assert_contains "$app_html" 'Loading'

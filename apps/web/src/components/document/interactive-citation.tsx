@@ -10,8 +10,10 @@ import { FileSearch, MapPin } from 'lucide-react';
 interface CitationContextValue {
   /** Currently selected / active field ID */
   selectedFieldId: string | null;
+  /** Page number for the selected field, when the extractor supplied one */
+  selectedPageNumber: number | null;
   /** Select a field by ID (or null to clear) */
-  selectField: (fieldId: string | null) => void;
+  selectField: (fieldId: string | null, pageNumber?: number | null) => void;
   /** Toggle a field into the highlighted set (multi-select) */
   toggleField: (fieldId: string) => void;
   /** Set of field IDs currently highlighted */
@@ -32,16 +34,22 @@ export function useCitation(): CitationContextValue {
   return ctx;
 }
 
+export function useOptionalCitation(): CitationContextValue | null {
+  return useContext(CitationContext);
+}
+
 /**
- * Provider that wraps the document workspace, enabling
+ * Provider that wraps the document record, enabling
  * field-to-document interaction.
  */
 export function CitationProvider({ children }: { children: ReactNode }) {
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
+  const [selectedPageNumber, setSelectedPageNumber] = useState<number | null>(null);
   const [highlightedFieldIds, setHighlightedFieldIds] = useState<Set<string>>(new Set());
 
-  const selectField = useCallback((fieldId: string | null) => {
+  const selectField = useCallback((fieldId: string | null, pageNumber?: number | null) => {
     setSelectedFieldId(fieldId);
+    setSelectedPageNumber(fieldId ? pageNumber ?? null : null);
   }, []);
 
   const toggleField = useCallback((fieldId: string) => {
@@ -54,7 +62,7 @@ export function CitationProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <CitationContext.Provider value={{ selectedFieldId, selectField, toggleField, highlightedFieldIds }}>
+    <CitationContext.Provider value={{ selectedFieldId, selectedPageNumber, selectField, toggleField, highlightedFieldIds }}>
       {children}
     </CitationContext.Provider>
   );

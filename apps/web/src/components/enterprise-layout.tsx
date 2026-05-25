@@ -3,21 +3,28 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { type ReactNode, useEffect, useState } from 'react';
-import { ClipboardCheck, FileText, FolderOpen, History, LogOut, Settings2, ShieldCheck, Users } from 'lucide-react';
+import { ChevronDown, ClipboardCheck, FileText, FolderOpen, History, LogOut, Menu, Settings, Settings2, UserCircle, Users } from 'lucide-react';
+import { BalanceIcon } from './brand/BalanceIcon';
 import { useAuth } from '../context/auth-context';
 import { getReviewMetrics } from '../lib/api/reviews';
 import { Button } from './ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from './ui/dropdown-menu';
 import { ThemeToggle } from './theme-toggle';
 import { cn } from '@/lib/utils';
-import { EnvironmentBadge } from './system/environment-badge';
 import { AppFooter } from './system/app-footer';
-import { useSystemStatus } from '../hooks/use-system-status';
+import { roleLabel } from '@/lib/display-labels';
 
 export function EnterpriseLayout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
-  const { environment } = useSystemStatus();
   const [pendingCount, setPendingCount] = useState<number | null>(null);
 
   useEffect(() => {
@@ -47,18 +54,22 @@ export function EnterpriseLayout({ children }: { children: ReactNode }) {
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 lg:px-6">
           <div className="flex min-w-0 items-center gap-5">
             <Link href="/enterprise/documents" className="flex items-center gap-2 text-sm font-semibold tracking-tight">
-              <ShieldCheck className="size-5 text-info" />
+              <BalanceIcon className="size-6" aria-hidden="true" />
               <span className="text-base tracking-normal">
-                Balance <span className="font-serif tracking-tight">Enterprise</span>
+                Balance Enterprise
               </span>
             </Link>
-            <EnvironmentBadge environment={environment} />
             <nav className="hidden gap-1 md:flex">
               {navLinks.map((link) => (
                 <Button key={link.href} asChild variant="ghost" size="sm">
                 <Link
                   href={link.href}
-                  className={cn('gap-2', pathname?.startsWith(link.href) ? 'bg-muted text-foreground' : 'text-muted-foreground')}
+                  className={cn(
+                    'relative gap-2',
+                    pathname?.startsWith(link.href)
+                      ? 'text-primary after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary'
+                      : 'hover:bg-accent/15 hover:text-foreground'
+                  )}
                 >
                   <link.icon className="size-4" />
                   {link.label}
@@ -73,12 +84,51 @@ export function EnterpriseLayout({ children }: { children: ReactNode }) {
             </nav>
           </div>
           <div className="flex items-center gap-3">
-            <span className="hidden text-xs text-muted-foreground sm:inline">{user?.displayName} · <strong className="capitalize">{user?.role?.replace('_', ' ')}</strong></span>
             <ThemeToggle />
-            <Button type="button" variant="secondary" size="sm" onClick={handleLogout}>
-              <LogOut className="size-4" />
-              <span className="hidden sm:inline">Sign out</span>
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="h-10 gap-2 rounded-md border border-border bg-muted/55 px-3 hover:bg-muted"
+                  aria-label="Open account and navigation menu"
+                >
+                  <UserCircle className="size-4 text-muted-foreground" />
+                  <span className="hidden max-w-36 truncate text-sm sm:inline">
+                    {user?.displayName ?? 'Account'}
+                    {user?.role && <span className="text-muted-foreground"> · {roleLabel(user.role)}</span>}
+                  </span>
+                  <Menu className="size-4 md:hidden" />
+                  <ChevronDown className="hidden size-3.5 text-muted-foreground md:block" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-56">
+                <DropdownMenuLabel>{user?.displayName ?? 'Account'}</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <div className="md:hidden">
+                  {navLinks.map((link) => (
+                    <DropdownMenuItem key={link.href} asChild>
+                      <Link href={link.href}>
+                        <link.icon className="size-4" />
+                        {link.label}
+                      </Link>
+                    </DropdownMenuItem>
+                  ))}
+                  <DropdownMenuSeparator />
+                </div>
+                <DropdownMenuItem asChild>
+                  <Link href="/enterprise/settings">
+                    <Settings className="size-4" />
+                    Settings
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => void handleLogout()}>
+                  <LogOut className="size-4" />
+                  Sign out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </header>

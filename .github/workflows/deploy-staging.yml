@@ -209,6 +209,7 @@ jobs:
       - name: Generate deployment manifest
         env:
           DEPLOY_ENVIRONMENT: staging
+          DEPLOYMENT_MODE: deploy
         run: |
           set -euo pipefail
           bash scripts/deploy/generate-manifest.sh

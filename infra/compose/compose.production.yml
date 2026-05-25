@@ -72,7 +72,7 @@ services:
       DEPLOYMENT_NAMESPACE: ${DEPLOYMENT_NAMESPACE:-swe40006-project}
       APP_ENV: production
       NODE_ENV: ${NODE_ENV:-production}
-      APP_VERSION: ${APP_VERSION:-0.1.1}
+      APP_VERSION: ${APP_VERSION:-0.1.0}
       GIT_COMMIT: ${GIT_COMMIT:-production}
       BUILD_ID: ${BUILD_ID:-production-build}
       API_PORT: 3001
@@ -118,7 +118,7 @@ services:
       DEPLOYMENT_NAMESPACE: ${DEPLOYMENT_NAMESPACE:-swe40006-project}
       APP_ENV: production
       NODE_ENV: ${NODE_ENV:-production}
-      APP_VERSION: ${APP_VERSION:-0.1.1}
+      APP_VERSION: ${APP_VERSION:-0.1.0}
       GIT_COMMIT: ${GIT_COMMIT:-production}
       BUILD_ID: ${BUILD_ID:-production-build}
       WEB_PORT: 3000
@@ -171,7 +171,6 @@ services:
       - ../monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards-json:ro
     ports:
       # Port 3000 is taken by the web app, so Grafana uses 3002.
-      # Temporarily open TCP 3002 to a trusted source IP for inspection, then remove the rule.
       - '3002:3000'
     depends_on:
       - prometheus

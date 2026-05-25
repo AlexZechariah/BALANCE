@@ -3,10 +3,12 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { Eye, EyeOff, ReceiptText, Building2, User } from 'lucide-react';
+import { Building2, User } from 'lucide-react';
 import { useAuth } from '../../context/auth-context';
 import { BalanceApiError } from '../../lib/api/client';
 import { homeForRole } from '../../lib/auth-routing';
+import { BalanceIcon } from '@/components/brand/BalanceIcon';
+import { PasswordField } from '@/components/forms/password-field';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -30,8 +32,6 @@ export default function RegisterPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   // Redirect already-authenticated users.
   useEffect(() => {
@@ -109,12 +109,10 @@ export default function RegisterPage() {
       <Card variant="panel" className="w-full max-w-md">
         <CardHeader>
           <div className="mb-2 flex items-center gap-2">
-            <span className="flex size-9 items-center justify-center rounded-md border border-primary/25 bg-primary/10 text-primary">
-              <ReceiptText className="size-5" />
-            </span>
+            <BalanceIcon className="size-6" aria-hidden="true" />
             <span className="text-lg font-semibold font-display">Balance</span>
           </div>
-          <CardTitle className="text-2xl">Create account</CardTitle>
+          <CardTitle className="text-2xl">Create Account</CardTitle>
           <p className="text-sm text-muted-foreground">Choose your account type to get started.</p>
         </CardHeader>
 
@@ -221,64 +219,28 @@ export default function RegisterPage() {
             </div>
 
             {/* Password */}
-            <div>
-              <Label htmlFor="password">Password</Label>
-              <div className="relative">
-                <Input
-                  id="password"
-                  type={showPassword ? 'text' : 'password'}
-                  autoComplete="new-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  disabled={submitting}
-                  className="pr-10"
-                  placeholder="At least 8 characters"
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  className="absolute right-0 top-0"
-                  onClick={() => setShowPassword((value) => !value)}
-                >
-                  {showPassword ? <EyeOff /> : <Eye />}
-                </Button>
-              </div>
-              {fieldErrors.password && (
-                <p className="mt-1 text-sm text-destructive">{fieldErrors.password}</p>
-              )}
-            </div>
+            <PasswordField
+              id="password"
+              label="Password"
+              autoComplete="new-password"
+              value={password}
+              onChange={setPassword}
+              disabled={submitting}
+              placeholder="At least 8 characters"
+              error={fieldErrors.password}
+            />
 
             {/* Confirm password */}
-            <div>
-              <Label htmlFor="confirmPassword">Confirm password</Label>
-              <div className="relative">
-                <Input
-                  id="confirmPassword"
-                  type={showConfirmPassword ? 'text' : 'password'}
-                  autoComplete="new-password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  disabled={submitting}
-                  className="pr-10"
-                  placeholder="Re-enter password"
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
-                  className="absolute right-0 top-0"
-                  onClick={() => setShowConfirmPassword((value) => !value)}
-                >
-                  {showConfirmPassword ? <EyeOff /> : <Eye />}
-                </Button>
-              </div>
-              {fieldErrors.confirmPassword && (
-                <p className="mt-1 text-sm text-destructive">{fieldErrors.confirmPassword}</p>
-              )}
-            </div>
+            <PasswordField
+              id="confirmPassword"
+              label="Confirm password"
+              autoComplete="new-password"
+              value={confirmPassword}
+              onChange={setConfirmPassword}
+              disabled={submitting}
+              placeholder="Re-enter password"
+              error={fieldErrors.confirmPassword}
+            />
 
             {/* Server error */}
             {error && (

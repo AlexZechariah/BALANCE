@@ -28,7 +28,7 @@ export function RoutePlaceholderShell({ routePath, routeTitle, routeSummary }: R
           <Badge variant="success">{config.appEnv.toUpperCase()}</Badge>
           <h1 className="mt-5 text-3xl font-semibold tracking-tight">{config.appName}</h1>
           <p className="mt-2 max-w-3xl text-muted-foreground">
-            Balance converts receipts, invoices, claims, reviews, and audit evidence into a structured workspace.
+            Balance converts receipts, invoices, claims, reviews, and audit evidence into a structured document system.
           </p>
         </section>
 
@@ -57,7 +57,7 @@ export function RoutePlaceholderShell({ routePath, routeTitle, routeSummary }: R
         </div>
 
         <Card>
-          <CardHeader><CardTitle>Available routes</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Available Routes</CardTitle></CardHeader>
           <CardContent>
             <div className="flex flex-wrap gap-3">
           {routeLinks.map((item) => {

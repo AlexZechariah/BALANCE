@@ -65,16 +65,21 @@ function AuditContent() {
   useEffect(() => { load(0); }, [search, action, entityType]);
 
   const actionColors: Record<string, string> = {
-    'document.uploaded': 'text-emerald-400',
-    'extraction.queued': 'text-yellow-400',
-    'extraction.started': 'text-blue-400',
-    'extraction.completed': 'text-emerald-400',
-    'extraction.failed': 'text-red-400',
+    'document.uploaded': 'text-emerald-700 dark:text-emerald-400',
+    'document.deleted': 'text-red-700 dark:text-red-400',
+    'documents.bulk_deleted': 'text-red-700 dark:text-red-400',
+    'extraction.queued': 'text-amber-700 dark:text-yellow-400',
+    'extraction.started': 'text-blue-700 dark:text-blue-400',
+    'extraction.completed': 'text-emerald-700 dark:text-emerald-400',
+    'extraction.failed': 'text-red-700 dark:text-red-400',
     'document.corrected': 'text-cyan-400',
     'claim.submitted': 'text-info',
-    'review.started': 'text-blue-400',
-    'review.approved': 'text-emerald-400',
-    'review.rejected': 'text-red-400',
+    'review.started': 'text-blue-700 dark:text-blue-400',
+    'review.approved': 'text-emerald-700 dark:text-emerald-400',
+    'review.rejected': 'text-red-700 dark:text-red-400',
+    'budget.created': 'text-emerald-700 dark:text-emerald-400',
+    'budget.updated': 'text-blue-700 dark:text-blue-400',
+    'budget.deleted': 'text-red-700 dark:text-red-400',
   };
 
   return (
@@ -84,7 +89,7 @@ function AuditContent() {
         <div>
           <p className="text-sm text-muted-foreground">Admin console</p>
           <h1 className="mt-1 text-3xl font-semibold tracking-tight">Audit Log</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Full system activity history. {total > 0 && `${total} events in this filter.`}</p>
+          <p className="mt-1 text-sm text-muted-foreground">Organization-visible activity. {total > 0 && `${total} events in this filter.`}</p>
         </div>
         <Button
           onClick={() => { setOffset(0); load(0); }}
@@ -97,10 +102,10 @@ function AuditContent() {
       </div>
 
       <div className="grid gap-3 md:grid-cols-4">
-        <Metric label="Total events" value={summary?.total ?? total} />
-        <Metric label="Action types" value={summary?.byAction.length ?? 0} />
-        <Metric label="Recent failures" value={summary?.recentFailures.length ?? 0} />
-        <Metric label="Entities" value={summary?.byEntityType.length ?? 0} />
+        <Metric label="Visible events" value={summary?.total ?? total} hint="Same access scope as the table" />
+        <Metric label="Failed extractions" value={summary?.failedExtractions ?? 0} hint="Textract failures in visible audit history" />
+        <Metric label="Destructive changes" value={summary?.destructiveChanges ?? 0} hint="Deletes and irreversible admin actions" />
+        <Metric label="Active actor roles" value={summary?.activeActorRoles ?? 0} hint="Distinct roles represented in events" />
       </div>
 
       <div className="grid gap-3 rounded-lg border border-border bg-card p-3 lg:grid-cols-[1fr_auto_auto]">
@@ -123,13 +128,14 @@ function AuditContent() {
             <SelectItem value="extraction_job">Extraction job</SelectItem>
             <SelectItem value="claim">Claim</SelectItem>
             <SelectItem value="review">Review</SelectItem>
+            <SelectItem value="budget">Budget</SelectItem>
           </SelectContent>
         </Select>
       </div>
 
       {error && <Alert role="alert" variant="destructive">{error}</Alert>}
 
-      {loading && <p className="text-sm text-muted-foreground">Loading audit log…</p>}
+      {loading && <p className="text-sm text-muted-foreground">Loading audit log...</p>}
 
       {!loading && events.length === 0 && (
         <div className="rounded-lg border border-border bg-card p-8 text-center">
@@ -139,6 +145,7 @@ function AuditContent() {
 
       {!loading && events.length > 0 && (
         <div className="overflow-hidden rounded-lg border border-border bg-card">
+          <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
@@ -170,12 +177,13 @@ function AuditContent() {
               ))}
             </TableBody>
           </Table>
+          </div>
 
           {/* Pagination */}
           {total > LIMIT && (
             <div className="flex items-center justify-between border-t border-border px-4 py-3">
               <p className="text-xs text-muted-foreground">
-                Showing {offset + 1}–{Math.min(offset + LIMIT, total)} of {total}
+                Showing {offset + 1}-{Math.min(offset + LIMIT, total)} of {total}
               </p>
               <div className="flex gap-2">
                 <Button
@@ -204,12 +212,13 @@ function AuditContent() {
   );
 }
 
-function Metric({ label, value }: { label: string; value: number | string }) {
+function Metric({ label, value, hint }: { label: string; value: number | string; hint: string }) {
   return (
     <Card>
       <CardContent className="p-4">
         <p className="text-sm text-muted-foreground">{label}</p>
         <p className="mt-2 font-mono text-2xl font-semibold tabular-nums">{value}</p>
+        <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
       </CardContent>
     </Card>
   );

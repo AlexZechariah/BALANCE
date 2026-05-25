@@ -36,6 +36,8 @@ export interface DocumentSummary {
   id: string;
   ownerId: string;
   originalFilename: string;
+  label: string | null;
+  notes: string | null;
   contentType: string;
   sizeBytes: number;
   status: DocumentStatus;
@@ -92,6 +94,7 @@ export async function uploadDocument(
   category?: string,
   tags?: string,
   claimIntent?: string,
+  documentType?: string,
 ): Promise<UploadDocumentResponse> {
   const form = new FormData();
   form.append('file', file);
@@ -100,6 +103,7 @@ export async function uploadDocument(
   if (category) form.append('category', category);
   if (tags) form.append('tags', tags);
   if (claimIntent) form.append('claimIntent', claimIntent);
+  if (documentType) form.append('documentType', documentType);
   return apiUpload<UploadDocumentResponse>('/documents', form);
 }
 
@@ -145,8 +149,23 @@ export interface DocumentInsights {
   monthlySpend: Array<{ month: string; amountMinor: number; count: number }>;
   merchantSpend: Array<{ merchantName: string; amountMinor: number; count: number }>;
   categorySpend: Array<{ category: string; amountMinor: number; count: number }>;
+  recordTypeSpend: Array<{ recordType: string; amountMinor: number; count: number }>;
   recentDocuments: DocumentSummary[];
   recentClaims: Array<{ id: string; status: string; purpose: string; amountMinor: number | null; merchantName: string | null; currency: string | null }>;
+  summary: {
+    totalDocuments: number;
+    totalAmountMinor: number;
+    currentMonthAmountMinor: number;
+    previousMonthAmountMinor: number;
+    monthOverMonthDeltaMinor: number;
+    needsReviewCount: number;
+    failedCount: number;
+    processingCount: number;
+    claimableAmountMinor: number;
+    statusCounts: Record<string, number>;
+    claimStatusCounts: Record<string, number>;
+  };
+  lastUpdatedAt: string;
 }
 
 export async function getDocumentInsights(): Promise<{ insights: DocumentInsights }> {
@@ -179,7 +198,7 @@ export async function retryDocumentExtraction(
 
 export async function updateDocumentMetadata(
   id: string,
-  patch: { label?: string | null; notes?: string | null; category?: string | null; tags?: string[]; retentionUntil?: string | null },
+  patch: { label?: string | null; notes?: string | null; category?: string | null; documentType?: string | null; tags?: string[]; retentionUntil?: string | null },
 ): Promise<{ document: DocumentDetail }> {
   return apiRequest(`/documents/${id}/metadata`, {
     method: 'PATCH',

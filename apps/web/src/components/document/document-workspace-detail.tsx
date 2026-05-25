@@ -1,12 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { useParams, useRouter } from 'next/navigation';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircle2, ClipboardCheck, Keyboard, RefreshCcw, ShieldAlert, X } from 'lucide-react';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { CheckCircle2, ClipboardCheck, Edit3, Keyboard, RefreshCcw, Save, ShieldAlert, X } from 'lucide-react';
 
 import { StatusBadge } from '../status-badge';
-import { getDocument, retryDocumentExtraction, saveDocumentCorrections, deleteDocument } from '../../lib/api/documents';
+import { getDocument, retryDocumentExtraction, saveDocumentCorrections, deleteDocument, updateDocumentMetadata } from '../../lib/api/documents';
 import { submitClaim } from '../../lib/api/claims';
 import { getEnterpriseDocumentOwner } from '../../lib/api/enterprise';
 import { BalanceApiError } from '../../lib/api/client';
@@ -21,8 +21,10 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { formatDateTime, formatMoney } from '@/lib/format';
+import { balanceCategories, categoryLabel, consumerRecordTypes, recordTypeLabel, statusLabel } from '@/lib/display-labels';
 import { PageTransition } from '@/components/workspace/page-transition';
 
 const POLLING_STATUSES = new Set(['queued', 'processing']);
@@ -34,6 +36,35 @@ const MINOR_UNIT_FIELDS = new Set(['amountMinor']);
 
 function displayValue(field: DocumentField): string {
   return field.correctedValue ?? field.value;
+}
+
+interface MetadataFormState {
+  label: string;
+  category: string;
+  documentType: string;
+  notes: string;
+  tags: string;
+}
+
+function metadataFromDocument(doc: DocumentDetail): MetadataFormState {
+  const documentType = doc.documentType && consumerRecordTypes.includes(doc.documentType as (typeof consumerRecordTypes)[number])
+    ? doc.documentType
+    : 'personal';
+
+  return {
+    label: doc.label ?? doc.originalFilename.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' '),
+    category: doc.category ?? 'other',
+    documentType,
+    notes: doc.notes ?? '',
+    tags: (doc.tags ?? []).join(', '),
+  };
+}
+
+function splitTags(value: string): string[] {
+  return value
+    .split(',')
+    .map((tag) => tag.trim())
+    .filter(Boolean);
 }
 
 type FieldCategory = 'vendor' | 'receiver' | 'dates' | 'financial' | 'address' | 'other';
@@ -68,6 +99,7 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
   const params = useParams();
   const id = params?.id as string;
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user } = useAuth();
 
   const [doc, setDoc] = useState<DocumentDetail | null>(null);
@@ -78,6 +110,8 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
 
   // Correction workflow
   const [corrections, setCorrections] = useState<Record<string, string>>({});
+  const [metadata, setMetadata] = useState<MetadataFormState>({ label: '', category: 'other', documentType: 'personal', notes: '', tags: '' });
+  const [editMode, setEditMode] = useState(searchParams?.get('edit') === '1');
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
 
@@ -90,10 +124,12 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
   const shortcutsRef = useRef<HTMLDivElement>(null);
 
   const isOwner = Boolean(doc && user && doc.ownerId === user.id);
+  const isConsumerView = user?.role === 'consumer' || documentsHref.startsWith('/app');
   const hasActiveClaim = Boolean(doc?.claim && doc.claim.status !== 'draft');
   const canRetry = isOwner && Boolean(doc) && POLLING_STATUSES.has(doc!.status) === false && !hasActiveClaim;
   const canCorrect = isOwner && Boolean(doc) && CORRECTION_ALLOWED.has(doc!.status);
-  const canClaim = isOwner && Boolean(doc) && CLAIM_ALLOWED.has(doc!.status) && (!doc!.claim || doc!.claim.status === 'draft');
+  const canEditMetadata = Boolean(doc) && (isOwner || user?.role === 'admin' || user?.role === 'system_admin');
+  const canClaim = !isConsumerView && isOwner && Boolean(doc) && CLAIM_ALLOWED.has(doc!.status) && (!doc!.claim || doc!.claim.status === 'draft');
 
   // Shared doc fetcher — does NOT touch `loading` so polling doesn't flash the page.
   const fetchDoc = useCallback(async () => {
@@ -102,6 +138,7 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
       setError(null);
       setDoc(res.document);
       setCorrections(Object.fromEntries(res.document.fields.map((f) => [f.id, f.correctedValue ?? ''])));
+      setMetadata(metadataFromDocument(res.document));
       return res.document;
     } catch (err) {
       if (err instanceof BalanceApiError && err.status === 404) setError('Document not found.');
@@ -134,7 +171,7 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
         setOwner(res.document.owner ? { displayName: res.document.owner.displayName, email: res.document.owner.email } : null);
       })
       .catch(() => {
-        // Best-effort only; owner info is not required to use the workspace.
+        // Best-effort only; owner info is not required to use the record.
       });
 
     return () => {
@@ -175,7 +212,7 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
       }
       if (mod && key === 'Enter') {
         e.preventDefault();
-        const form = document.getElementById('correction-form') as HTMLFormElement | null;
+        const form = document.getElementById('document-information-form') as HTMLFormElement | null;
         if (form) form.requestSubmit();
       }
     }
@@ -198,27 +235,48 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
     }
   }
 
-  async function handleSave(e: React.FormEvent) {
+  async function handleSave(e: FormEvent) {
     e.preventDefault();
     if (!doc) return;
+    if (!metadata.label.trim()) {
+      setError('Label is required.');
+      return;
+    }
+    if (!metadata.category) {
+      setError('Category is required.');
+      return;
+    }
 
     setSaving(true);
     setError(null);
     setSuccess(false);
 
     try {
-      const fields = doc.fields.map((field) => ({
-        id: field.id,
-        name: field.name,
-        correctedValue: (corrections[field.id] ?? '').trim() === '' ? null : (corrections[field.id] ?? '').trim(),
-      }));
+      if (canEditMetadata) {
+        await updateDocumentMetadata(doc.id, {
+          label: metadata.label.trim(),
+          category: metadata.category,
+          documentType: isConsumerView ? metadata.documentType : doc.documentType ?? null,
+          notes: metadata.notes.trim() || null,
+          tags: splitTags(metadata.tags),
+        });
+      }
 
-      await saveDocumentCorrections(doc.id, fields);
+      if (canCorrect) {
+        const fields = doc.fields.map((field) => ({
+          id: field.id,
+          name: field.name,
+          correctedValue: (corrections[field.id] ?? '').trim() === '' ? null : (corrections[field.id] ?? '').trim(),
+        }));
+
+        await saveDocumentCorrections(doc.id, fields);
+      }
       setSuccess(true);
       await load();
+      setEditMode(false);
       setTimeout(() => setSuccess(false), 2500);
     } catch (err) {
-      setError(err instanceof BalanceApiError ? err.error.message : 'Failed to save corrections.');
+      setError(err instanceof BalanceApiError ? err.error.message : 'Failed to save document information.');
     } finally {
       setSaving(false);
     }
@@ -253,13 +311,15 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
     return acc;
   }, { vendor: [], receiver: [], dates: [], financial: [], address: [], other: [] });
 
-  const categories = (Object.keys(grouped) as FieldCategory[]).filter((category) => grouped[category].length > 0);
+  const fieldCategories = (Object.keys(grouped) as FieldCategory[]).filter((category) => grouped[category].length > 0);
   const isPolling = POLLING_STATUSES.has(doc.status);
   const claimHrefBase = documentsHref.startsWith('/enterprise') ? '/enterprise/claims' : '/app/claims';
   const showExtractionFailure = doc.status === 'failed' || doc.extractionJob?.status === 'failed';
+  const showExtractionPanel = isPolling || showExtractionFailure;
   const extractionError = doc.extractionJob?.errorMessage || (doc.status === 'failed' ? 'Extraction failed.' : null);
   const extractionErrorLower = (extractionError || '').toLowerCase();
   const looksLikeExpiredAwsToken = extractionErrorLower.includes('expiredtoken');
+  const documentTitle = doc.label || doc.originalFilename;
 
   return (
     <CitationProvider>
@@ -267,9 +327,9 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
         <div className="grid gap-6">
           <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
             <div>
-              <p className="text-sm text-muted-foreground">Document workspace</p>
-              <h1 className="mt-1 text-2xl font-semibold tracking-tight">{doc.originalFilename}</h1>
-              <p className="mt-1 text-xs text-muted-foreground">Uploaded {formatDateTime(doc.createdAt)}</p>
+              <p className="text-sm text-muted-foreground">Document record</p>
+              <h1 className="mt-1 text-2xl font-semibold tracking-tight">{documentTitle}</h1>
+              <p className="mt-1 text-xs text-muted-foreground">Source file: {doc.originalFilename} · Uploaded {formatDateTime(doc.createdAt)}</p>
               {owner && (
                 <p className="mt-1 text-xs text-muted-foreground">
                   Submitted by <span className="text-foreground">{owner.displayName}</span> · {owner.email}
@@ -279,6 +339,12 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
             <div className="flex flex-wrap items-center gap-2">
               <StatusBadge status={doc.status} />
               {isPolling && <span className="inline-block size-2 rounded-full bg-primary animate-pulse" />}
+              {canEditMetadata && (
+                <Button type="button" variant={editMode ? 'secondary' : 'default'} size="sm" onClick={() => setEditMode((value) => !value)}>
+                  <Edit3 className="size-4" />
+                  {editMode ? 'Cancel Edit' : 'Edit'}
+                </Button>
+              )}
               <Button type="button" variant="secondary" size="sm" onClick={() => setShowShortcuts((v) => !v)}>
                 <Keyboard className="size-4" />
                 Shortcuts
@@ -300,7 +366,9 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
                       <AlertDialogHeader>
                         <AlertDialogTitle>Delete this document?</AlertDialogTitle>
                         <AlertDialogDescription>
-                          This permanently deletes the document. Claims and audit context may restrict deletion.
+                          {isConsumerView
+                            ? 'This permanently deletes the document and its extraction history.'
+                            : 'This permanently deletes the document. Claims and audit context may restrict deletion.'}
                         </AlertDialogDescription>
                       </AlertDialogHeader>
                       {deleteError && <Alert role="alert" variant="destructive">{deleteError}</Alert>}
@@ -327,16 +395,19 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
             </div>
             <div className="grid content-start gap-5">
               <Card>
-                <CardHeader><CardTitle>Evidence summary</CardTitle></CardHeader>
+                <CardHeader><CardTitle>Evidence Summary</CardTitle></CardHeader>
                 <CardContent className="grid grid-cols-2 gap-3 text-sm">
                   <div><p className="text-xs text-muted-foreground">Merchant</p><p>{doc.merchantName ?? 'Not captured'}</p></div>
                   <div><p className="text-xs text-muted-foreground">Amount</p><p className="font-mono tabular-nums">{formatMoney(doc.amountMinor, doc.currency ?? 'MYR')}</p></div>
                   <div><p className="text-xs text-muted-foreground">Date</p><p className="font-mono text-xs tabular-nums">{doc.documentDate ?? 'Not captured'}</p></div>
-                  <div><p className="text-xs text-muted-foreground">Claim</p><StatusBadge status={doc.claim?.status ?? '—'} /></div>
+                  <div><p className="text-xs text-muted-foreground">Category</p><p>{categoryLabel(doc.category)}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Record type</p><p>{recordTypeLabel(doc.documentType)}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Last updated</p><p className="font-mono text-xs tabular-nums">{formatDateTime(doc.updatedAt)}</p></div>
+                  {!isConsumerView && <div><p className="text-xs text-muted-foreground">Claim</p><StatusBadge status={doc.claim?.status ?? '—'} /></div>}
                 </CardContent>
               </Card>
 
-              <Card variant="surface">
+              {showExtractionPanel && <Card variant="surface">
                 <CardHeader>
                   <CardTitle>Extraction</CardTitle>
                 </CardHeader>
@@ -399,9 +470,9 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
                     </Alert>
                   )}
                 </CardContent>
-              </Card>
+              </Card>}
 
-              {doc.claim && (
+              {!isConsumerView && doc.claim && (
                 <Card variant="surface">
                   <CardHeader>
                     <CardTitle>Claim</CardTitle>
@@ -427,43 +498,141 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
 
               {canClaim && <ClaimForm documentId={doc.id} onSubmitted={load} />}
 
-              {canCorrect && (
+              {(canEditMetadata || fieldCategories.length > 0) && (
                 <Card variant="surface">
                   <CardHeader>
-                    <CardTitle>Corrections</CardTitle>
+                    <CardTitle>Document Information</CardTitle>
                   </CardHeader>
                   <CardContent className="p-5">
-                    <p className="mb-3 text-xs text-muted-foreground">
-                      Correct extracted fields and save. For <strong className="text-foreground">Amount</strong>, enter minor units, such as <code className="font-mono text-foreground">444</code> for 4.44.
-                    </p>
-                    <form id="correction-form" onSubmit={handleSave} className="flex flex-col gap-4">
-                      {doc.fields.map((field) => (
-                        <div key={field.id}>
-                          <Label className="mb-1 block text-xs">
-                            {field.label ?? field.name}
-                            {MINOR_UNIT_FIELDS.has(field.name) && (
-                              <span className="ml-2 font-normal text-muted-foreground">(minor units)</span>
-                            )}
-                          </Label>
-                          <Input
-                            type="text"
-                            value={corrections[field.id] ?? ''}
-                            onChange={(e) => setCorrections((prev) => ({ ...prev, [field.id]: e.target.value }))}
-                            disabled={saving}
-                            placeholder={field.value}
-                          />
-                          <p className="mt-0.5 text-xs text-muted-foreground">
-                            Original: {field.value}
-                            {field.correctedValue && field.correctedValue !== field.value && ` · Previously corrected: ${field.correctedValue}`}
-                          </p>
+                    {editMode && canEditMetadata ? (
+                      <form id="document-information-form" onSubmit={handleSave} className="grid gap-5">
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <div>
+                            <Label htmlFor="document-label">Label <span className="text-destructive">*</span></Label>
+                            <Input
+                              id="document-label"
+                              value={metadata.label}
+                              onChange={(event) => setMetadata((current) => ({ ...current, label: event.target.value }))}
+                              disabled={saving}
+                              required
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="document-category">Category <span className="text-destructive">*</span></Label>
+                            <Select value={metadata.category} onValueChange={(value) => setMetadata((current) => ({ ...current, category: value }))} disabled={saving}>
+                              <SelectTrigger id="document-category"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                {balanceCategories.map((value) => (
+                                  <SelectItem key={value} value={value}>{categoryLabel(value)}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          {isConsumerView && (
+                            <div>
+                              <Label htmlFor="document-record-type">Record type</Label>
+                              <Select value={metadata.documentType} onValueChange={(value) => setMetadata((current) => ({ ...current, documentType: value }))} disabled={saving}>
+                                <SelectTrigger id="document-record-type"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  {consumerRecordTypes.map((value) => (
+                                    <SelectItem key={value} value={value}>{recordTypeLabel(value)}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          )}
+                          <div>
+                            <Label htmlFor="document-tags">Tags</Label>
+                            <Input
+                              id="document-tags"
+                              value={metadata.tags}
+                              onChange={(event) => setMetadata((current) => ({ ...current, tags: event.target.value }))}
+                              disabled={saving}
+                              placeholder="tax, warranty, return"
+                            />
+                          </div>
                         </div>
-                      ))}
-                      {error && <Alert role="alert" variant="destructive">{error}</Alert>}
-                      {success && <Alert variant="success"><CheckCircle2 className="mr-2 inline size-4" />Corrections saved successfully.</Alert>}
-                      <Button type="submit" disabled={saving} className="w-fit">
-                        {saving ? 'Saving…' : 'Save corrections'}
-                      </Button>
-                    </form>
+                        <div>
+                          <Label htmlFor="document-notes">Notes</Label>
+                          <Textarea
+                            id="document-notes"
+                            value={metadata.notes}
+                            onChange={(event) => setMetadata((current) => ({ ...current, notes: event.target.value }))}
+                            disabled={saving}
+                            rows={3}
+                          />
+                        </div>
+
+                        {canCorrect && doc.fields.length > 0 && (
+                          <div className="grid gap-3 border-t border-border pt-4">
+                            <div>
+                              <p className="text-sm font-medium">Extracted Fields</p>
+                              <p className="text-xs text-muted-foreground">
+                                Correct extracted values and save. For <strong className="text-foreground">Amount</strong>, enter minor units, such as <code className="font-mono text-foreground">444</code> for 4.44.
+                              </p>
+                            </div>
+                            <div className="grid gap-3 md:grid-cols-2">
+                              {doc.fields.map((field) => (
+                                <div key={field.id}>
+                                  <Label className="mb-1 block text-xs">
+                                    {field.label ?? field.name}
+                                    {MINOR_UNIT_FIELDS.has(field.name) && (
+                                      <span className="ml-2 font-normal text-muted-foreground">(minor units)</span>
+                                    )}
+                                  </Label>
+                                  <Input
+                                    type="text"
+                                    value={corrections[field.id] ?? ''}
+                                    onChange={(event) => setCorrections((prev) => ({ ...prev, [field.id]: event.target.value }))}
+                                    disabled={saving}
+                                    placeholder={field.value}
+                                  />
+                                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                                    Original: {field.value}
+                                    {field.correctedValue && field.correctedValue !== field.value && ` · Previously corrected: ${field.correctedValue}`}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {error && <Alert role="alert" variant="destructive">{error}</Alert>}
+                        {success && <Alert variant="success"><CheckCircle2 className="mr-2 inline size-4" />Document information saved.</Alert>}
+                        <Button type="submit" disabled={saving} className="w-fit">
+                          {saving ? <RefreshCcw className="size-4 animate-spin" /> : <Save className="size-4" />}
+                          {saving ? 'Saving...' : 'Save Document Information'}
+                        </Button>
+                      </form>
+                    ) : (
+                      <div className="grid gap-5">
+                        <div className="grid gap-3 text-sm sm:grid-cols-2">
+                          <div><p className="text-xs text-muted-foreground">Label</p><p>{doc.label ?? doc.originalFilename}</p></div>
+                          <div><p className="text-xs text-muted-foreground">Category</p><p>{categoryLabel(doc.category)}</p></div>
+                          <div><p className="text-xs text-muted-foreground">Record type</p><p>{recordTypeLabel(doc.documentType)}</p></div>
+                          <div><p className="text-xs text-muted-foreground">Status</p><p>{statusLabel(doc.status)}</p></div>
+                          <div className="sm:col-span-2"><p className="text-xs text-muted-foreground">Notes</p><p>{doc.notes || 'No notes added.'}</p></div>
+                          {(doc.tags ?? []).length > 0 && <div className="sm:col-span-2"><p className="text-xs text-muted-foreground">Tags</p><p>{(doc.tags ?? []).join(', ')}</p></div>}
+                        </div>
+
+                        {fieldCategories.length > 0 ? (
+                          <div className="grid gap-4 border-t border-border pt-4">
+                            {fieldCategories.map((category) => (
+                              <div key={category} className="grid gap-2">
+                                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{categoryLabels[category]}</p>
+                                <div className="grid gap-2 md:grid-cols-2">
+                                  {grouped[category].map((field) => (
+                                    <FieldCard key={field.id} field={field} />
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <Alert variant="info">No extracted fields have been captured yet.</Alert>
+                        )}
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               )}
@@ -480,13 +649,13 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
                 </Card>
               )}
 
-              {!canClaim && !canCorrect && !doc.claim && !doc.review && categories.length === 0 && (
+              {!canClaim && !canCorrect && !doc.claim && !doc.review && fieldCategories.length === 0 && (
                 <Card variant="surface">
                   <CardHeader>
-                    <CardTitle>Next steps</CardTitle>
+                    <CardTitle>Next Steps</CardTitle>
                   </CardHeader>
                   <CardContent className="grid gap-2 text-sm text-muted-foreground">
-                    <p>If this document looks correct, wait for extraction to complete — then review the captured fields and submit a claim if needed.</p>
+                    <p>If this document looks correct, wait for extraction to complete — then review the captured fields and save any corrections.</p>
                     <p>If extraction fails, use <span className="font-medium text-foreground">Retry extraction</span> or upload a clearer photo/PDF.</p>
                   </CardContent>
                 </Card>
@@ -500,23 +669,6 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
             </div>
           </div>
 
-          {categories.length > 0 && (
-            <Card>
-              <CardHeader><CardTitle>Extracted fields</CardTitle></CardHeader>
-              <CardContent className="grid gap-4">
-                {categories.map((category) => (
-                  <div key={category} className="grid gap-2">
-                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{categoryLabels[category]}</p>
-                    <div className="grid gap-2 md:grid-cols-2">
-                      {grouped[category].map((field) => (
-                        <FieldCard key={field.id} field={field} />
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          )}
         </div>
       </PageTransition>
     </CitationProvider>
@@ -531,7 +683,7 @@ function FieldCard({ field }: { field: DocumentField }) {
   return (
     <button
       type="button"
-      onClick={() => citation.selectField(isSelected ? null : field.id)}
+      onClick={() => citation.selectField(isSelected ? null : field.id, field.pageNumber)}
       className="grid gap-1 rounded-md border border-border bg-background/60 p-3 text-left text-sm transition hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <div className="flex items-center justify-between gap-2">
@@ -557,7 +709,7 @@ function ClaimForm({ documentId, onSubmitted }: { documentId: string; onSubmitte
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     if (!purpose.trim()) { setError('Purpose is required.'); return; }

@@ -67,7 +67,8 @@ export class DocumentsController {
       notes: metadata.notes ?? null,
       category: metadata.category ?? null,
       tags: metadata.tags ?? null,
-      claimIntent: metadata.claimIntent ?? null
+      claimIntent: metadata.claimIntent ?? null,
+      documentType: metadata.documentType ?? null
     });
   }
 
@@ -167,6 +168,7 @@ export class DocumentsController {
       label?: string | null;
       notes?: string | null;
       category?: string | null;
+      documentType?: string | null;
       tags?: string[];
       retentionUntil?: string | null;
     } = {
@@ -177,6 +179,7 @@ export class DocumentsController {
     if (body.label !== undefined) input.label = body.label;
     if (body.notes !== undefined) input.notes = body.notes;
     if (body.category !== undefined) input.category = body.category;
+    if (body.documentType !== undefined) input.documentType = body.documentType;
     if (body.tags !== undefined) input.tags = body.tags;
     if (body.retentionUntil !== undefined) input.retentionUntil = body.retentionUntil;
 

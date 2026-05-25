@@ -28,17 +28,17 @@ describe('HomePage (live landing page)', () => {
     const html = renderToStaticMarkup(<HomePage />);
 
     expect(html).toContain('Balance');
-    expect(html).toContain('Balance workspace');
-    expect(html).toContain('Textract-first');
-    expect(html).toContain('Organize receipts');
-    expect(html).toContain('Enter workspace');
-    expect(html).toContain('Reviewer access');
+    expect(html).not.toContain('Balance receipt records');
+    expect(html).not.toContain('workspace');
+    expect(html).toContain('Evidence-ready document review');
+    expect(html).toContain('Capture receipts and invoices');
+    expect(html).toContain('Open Balance');
+    expect(html).toContain('Review Evidence');
     expect(html).toContain('Sign in');
-    // Feature cards
-    expect(html).toContain('Inbox');
-    expect(html).toContain('Extract');
-    expect(html).toContain('Review');
-    expect(html).toContain('Audit');
+    expect(html).toContain('Document Information');
+    expect(html).toContain('Spend Insights');
+    expect(html).toContain('Review Queue');
+    expect(html).toContain('Audit Trail');
   });
 });
 
@@ -62,7 +62,7 @@ describe('RoutePlaceholderShell', () => {
     );
 
     expect(html).toContain('Balance');
-    expect(html).toContain('structured workspace');
+    expect(html).toContain('structured document system');
     expect(html).toContain('STAGING');
     expect(html).toContain('Route');
     expect(html).toContain('role gateway');
@@ -99,13 +99,13 @@ describe('RoutePlaceholderShell', () => {
     const html = renderToStaticMarkup(
       <RoutePlaceholderShell
         routePath="/app"
-        routeTitle="Application workspace"
-        routeSummary="A workspace route for document review and record management."
+        routeTitle="Application"
+        routeSummary="A product route for document review and record management."
       />
     );
 
     expect(html).toContain('LOCAL');
     expect(html).toContain('/app');
-    expect(html).toContain('Application workspace');
+    expect(html).toContain('Application');
   });
 });

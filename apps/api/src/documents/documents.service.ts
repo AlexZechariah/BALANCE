@@ -308,6 +308,7 @@ export class DocumentsService {
     category?: string | null;
     tags?: string | null;
     claimIntent?: string | null;
+    documentType?: string | null;
   }) {
     if (!ACCEPTED_CONTENT_TYPES.has(input.contentType)) {
       throwContractHttpError(415, 'UNSUPPORTED_MEDIA_TYPE', 'Unsupported media type', []);
@@ -328,7 +329,7 @@ export class DocumentsService {
         category: input.category ?? null,
         tags: parseTags(input.tags),
         claimIntent: input.claimIntent ?? null,
-        documentType: input.contentType === 'application/pdf' ? 'receipt_pdf' : 'receipt',
+        documentType: input.documentType ?? (input.contentType === 'application/pdf' ? 'receipt_pdf' : 'receipt'),
         extractionSummary: { provider: resolveDefaultProvider(), stage: 'queued' }
       }
     });
@@ -676,6 +677,7 @@ export class DocumentsService {
     label?: string | null;
     notes?: string | null;
     category?: string | null;
+    documentType?: string | null;
     tags?: string[];
     retentionUntil?: string | null;
   }) {
@@ -689,6 +691,7 @@ export class DocumentsService {
         ...(input.label !== undefined ? { label: input.label } : {}),
         ...(input.notes !== undefined ? { notes: input.notes } : {}),
         ...(input.category !== undefined ? { category: input.category } : {}),
+        ...(input.documentType !== undefined ? { documentType: input.documentType } : {}),
         ...(input.tags !== undefined ? { tags: input.tags } : {}),
         ...(input.retentionUntil !== undefined
           ? { retentionUntil: input.retentionUntil ? new Date(input.retentionUntil) : null }
@@ -706,6 +709,7 @@ export class DocumentsService {
       metadata: {
         label: input.label ?? undefined,
         category: input.category ?? undefined,
+        documentType: input.documentType ?? undefined,
         tags: input.tags ?? undefined
       },
       documentId: document.id
@@ -813,9 +817,11 @@ export class DocumentsService {
     const byMonth = new Map<string, { month: string; amountMinor: number; count: number; taxMinor: number; serviceMinor: number; discountMinor: number }>();
     const byMerchant = new Map<string, { merchantName: string; amountMinor: number; count: number }>();
     const byCategory = new Map<string, { category: string; amountMinor: number; count: number }>();
+    const byRecordType = new Map<string, { recordType: string; amountMinor: number; count: number }>();
 
     let totalAmountMinor = 0;
     let currentMonthAmountMinor = 0;
+    let currentMonthDocumentCount = 0;
     let previousMonthAmountMinor = 0;
     let currentMonthTaxMinor = 0;
     let currentMonthServiceMinor = 0;
@@ -839,6 +845,7 @@ export class DocumentsService {
       totalAmountMinor += amount;
       if (docMonth === monthKey) {
         currentMonthAmountMinor += amount;
+        currentMonthDocumentCount += 1;
         currentMonthTaxMinor += tax;
         currentMonthServiceMinor += service;
         currentMonthDiscountMinor += discount;
@@ -871,6 +878,12 @@ export class DocumentsService {
       categoryEntry.count += 1;
       byCategory.set(category, categoryEntry);
 
+      const recordType = document.documentType ?? document.claimIntent ?? 'receipt';
+      const recordTypeEntry = byRecordType.get(recordType) ?? { recordType, amountMinor: 0, count: 0 };
+      recordTypeEntry.amountMinor += amount;
+      recordTypeEntry.count += 1;
+      byRecordType.set(recordType, recordTypeEntry);
+
       if (!largestDocument || amount > (largestDocument.amountMinor ?? 0)) largestDocument = mapDocumentSummary(document);
     }
 
@@ -896,14 +909,11 @@ export class DocumentsService {
         currentMonthSpendMinor: currentMonthAmountMinor,
         previousMonthSpendMinor: previousMonthAmountMinor,
         monthOverMonthChange,
-        currentMonthDocumentCount: documents.filter((document) => {
-          const date = document.transactionDate ?? document.documentDate ?? document.createdAt.toISOString().slice(0, 10);
-          return date.slice(0, 7) === monthKey;
-        }).length,
+        currentMonthDocumentCount,
         totalTaxMinor: currentMonthTaxMinor,
         totalServiceChargeMinor: currentMonthServiceMinor,
         totalDiscountMinor: currentMonthDiscountMinor,
-        averageReceiptMinor: documents.length ? Math.round(totalAmountMinor / documents.length) : 0,
+        averageReceiptMinor: currentMonthDocumentCount ? Math.round(currentMonthAmountMinor / currentMonthDocumentCount) : 0,
         largestDocument,
         mostFrequentMerchant: merchantsByCount[0] ? { merchantName: merchantsByCount[0].merchantName, count: merchantsByCount[0].count } : null,
         topMerchantBySpend: merchantsBySpend[0] ? { merchantName: merchantsBySpend[0].merchantName, amountMinor: merchantsBySpend[0].amountMinor } : null,
@@ -912,6 +922,7 @@ export class DocumentsService {
         monthlySpend: Array.from(byMonth.values()).sort((a, b) => a.month.localeCompare(b.month)).slice(-12),
         merchantSpend: merchantsBySpend.slice(0, 8),
         categorySpend: Array.from(byCategory.values()).sort((a, b) => b.amountMinor - a.amountMinor),
+        recordTypeSpend: Array.from(byRecordType.values()).sort((a, b) => b.amountMinor - a.amountMinor),
         recentDocuments: [...documents]
           .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
           .slice(0, 6)
@@ -944,7 +955,11 @@ export class DocumentsService {
           claimableAmountMinor,
           statusCounts,
           claimStatusCounts
-        }
+        },
+        lastUpdatedAt: (documents.reduce<Date | null>((latest, document) => {
+          if (!latest || document.updatedAt.getTime() > latest.getTime()) return document.updatedAt;
+          return latest;
+        }, null) ?? now).toISOString()
       }
     };
   }
@@ -972,7 +987,7 @@ export class DocumentsService {
       throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
     }
 
-    if (document.status !== 'extracted' && document.status !== 'correction_required') {
+    if (document.status !== 'extracted' && document.status !== 'correction_required' && document.status !== 'corrected') {
       throwContractHttpError(409, 'CONFLICT', 'Conflict', []);
     }
 
@@ -1100,6 +1115,7 @@ export class DocumentsService {
           storageKey: document.storageKey,
           storageDriver: document.storageDriver
         },
+        organizationId: document.organizationId,
       });
     }
     await this.audit.writeEvent({
@@ -1116,6 +1132,7 @@ export class DocumentsService {
         deletedClaimId: document.claim?.id ?? null,
         claimStatus: document.claim?.status ?? null
       },
+      organizationId: document.organizationId,
     });
   }
 

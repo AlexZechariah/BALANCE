@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useState } from 'rea
 import type { ReactNode } from 'react';
 
 import { clearToken, getToken } from '../lib/api/client';
-import { getCurrentUser, login as apiLogin, logout as apiLogout, register as apiRegister } from '../lib/api/auth';
+import { getCurrentUser, login as apiLogin, logout as apiLogout, register as apiRegister, updateAccount as apiUpdateAccount } from '../lib/api/auth';
 import type { AuthUser } from '../lib/api/auth';
 
 interface AuthState {
@@ -16,6 +16,7 @@ interface AuthState {
 interface AuthContextValue extends AuthState {
   login: (email: string, password: string) => Promise<AuthUser>;
   register: (email: string, password: string, displayName: string, orgName?: string) => Promise<AuthUser>;
+  updateAccount: (input: { displayName?: string | undefined; email?: string | undefined; currentPassword?: string | undefined; newPassword?: string | undefined }) => Promise<AuthUser>;
   logout: () => Promise<void>;
 }
 
@@ -78,8 +79,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setState({ user: null, loading: false, error: null });
   }, []);
 
+  const updateAccount = useCallback(async (input: { displayName?: string | undefined; email?: string | undefined; currentPassword?: string | undefined; newPassword?: string | undefined }) => {
+    const data = await apiUpdateAccount(input);
+    setState((s) => ({ ...s, user: data.user, error: null }));
+    return data.user;
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ ...state, login, register, logout }}>
+    <AuthContext.Provider value={{ ...state, login, register, updateAccount, logout }}>
       {children}
     </AuthContext.Provider>
   );

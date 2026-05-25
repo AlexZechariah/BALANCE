@@ -1,22 +1,23 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { type ElementType, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { ArrowRight, CircleAlert, FileClock, Files, ReceiptText, Search, TrendingUp, WalletCards } from 'lucide-react';
+import { ArrowRight, CircleAlert, FileClock, Files, Search, TrendingUp, UploadCloud, WalletCards } from 'lucide-react';
+
 import { RouteGuard } from '../../components/route-guard';
 import { ConsumerLayout } from '../../components/consumer-layout';
 import { useAuth } from '../../context/auth-context';
-import { getClaimInsights, type ClaimInsights } from '@/lib/api/claims';
 import { getDocumentInsights, type DocumentInsights } from '@/lib/api/documents';
 import { BalanceApiError } from '@/lib/api/client';
-import { formatMoney, formatNumber, formatPercent } from '@/lib/format';
-import { Button } from '@/components/ui/button';
+import { categoryLabel } from '@/lib/display-labels';
+import { formatDateTime, formatMoney, formatNumber, formatPercent } from '@/lib/format';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SpendBarChart } from '@/components/charts/spend-bar-chart';
 import { PageTransition } from '@/components/workspace/page-transition';
 
 export default function AppDashboard() {
@@ -31,26 +32,16 @@ export default function AppDashboard() {
 
 function DashboardContent() {
   const { user } = useAuth();
-  const [documentInsights, setDocumentInsights] = useState<DocumentInsights | null>(null);
-  const [claimInsights, setClaimInsights] = useState<ClaimInsights | null>(null);
+  const [insights, setInsights] = useState<DocumentInsights | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([getDocumentInsights(), getClaimInsights()])
-      .then(([documents, claims]) => {
-        setDocumentInsights(documents.insights);
-        setClaimInsights(claims.insights);
-      })
+    getDocumentInsights()
+      .then((documents) => setInsights(documents.insights))
       .catch((err) => {
-        setError(err instanceof BalanceApiError ? err.error.message : 'Failed to load workspace insights.');
+        setError(err instanceof BalanceApiError ? err.error.message : 'Failed to load document insights.');
       });
   }, []);
-
-  const chartData = documentInsights?.monthlySpend.map((item) => ({
-    month: item.month.slice(5),
-    spend: Math.round(item.amountMinor / 100),
-    count: item.count
-  })) ?? [];
 
   return (
     <PageTransition>
@@ -60,16 +51,16 @@ function DashboardContent() {
             <p className="text-sm text-muted-foreground">Dashboard</p>
             <h1 className="mt-1 text-3xl font-semibold tracking-tight">Welcome, {user?.displayName}</h1>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button asChild variant="secondary">
               <Link href="/app/documents">
                 <Search className="size-4" />
-                Search documents
+                Search Documents
               </Link>
             </Button>
             <Button asChild>
               <Link href="/app/documents/upload">
-                <ReceiptText className="size-4" />
+                <UploadCloud className="size-4" />
                 Upload
               </Link>
             </Button>
@@ -78,21 +69,21 @@ function DashboardContent() {
 
         {error && <Alert variant="destructive">{error}</Alert>}
 
-        {!documentInsights ? (
+        {!insights ? (
           <div className="grid gap-3 md:grid-cols-4">
-            {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28" />)}
+            {Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-28" />)}
           </div>
         ) : (
           <motion.div
             initial="hidden"
             animate="visible"
             variants={{ visible: { transition: { staggerChildren: 0.05 } } }}
-            className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1.5fr_1.5fr_1fr_1fr]"
+            className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1.4fr_1.2fr_1fr_1fr]"
           >
-            <MetricCard icon={WalletCards} label="This month" value={formatMoney(documentInsights.currentMonthSpendMinor)} detail={`${formatPercent(documentInsights.monthOverMonthChange)} vs previous month`} size="large" />
-            <MetricCard icon={Files} label="Receipts this month" value={formatNumber(documentInsights.currentMonthDocumentCount)} detail={`${formatMoney(documentInsights.averageReceiptMinor)} average receipt`} size="large" />
-            <MetricCard icon={TrendingUp} label="Tax and service" value={formatMoney(documentInsights.totalTaxMinor + documentInsights.totalServiceChargeMinor)} detail={`${formatMoney(documentInsights.totalDiscountMinor)} discounts detected`} />
-            <MetricCard icon={FileClock} label="Pending claims" value={formatMoney(claimInsights?.pendingAmountMinor ?? 0)} detail={`${claimInsights?.statusCounts.submitted ?? 0} submitted, ${claimInsights?.statusCounts.under_review ?? 0} in review`} />
+            <MetricCard icon={WalletCards} label="This Month" value={formatMoney(insights.currentMonthSpendMinor)} detail={`${formatPercent(insights.monthOverMonthChange)} vs previous month`} size="large" />
+            <MetricCard icon={Files} label="Receipts This Month" value={formatNumber(insights.currentMonthDocumentCount)} detail={`${formatMoney(insights.averageReceiptMinor)} average receipt`} size="large" />
+            <MetricCard icon={FileClock} label="Needs Review" value={formatNumber(insights.summary.needsReviewCount + insights.summary.failedCount)} detail={`${formatNumber(insights.summary.processingCount)} still processing`} />
+            <MetricCard icon={TrendingUp} label="Record-ready" value={formatMoney(insights.summary.claimableAmountMinor)} detail="Extracted or corrected documents" />
           </motion.div>
         )}
 
@@ -100,44 +91,28 @@ function DashboardContent() {
           <Card variant="panel">
             <CardHeader className="flex-row items-center justify-between">
               <div>
-                <CardTitle>Monthly spending</CardTitle>
-                <p className="mt-1 text-sm text-muted-foreground">Receipts grouped by transaction or upload month.</p>
+                <CardTitle>Monthly Spending</CardTitle>
+                <p className="mt-1 text-sm text-muted-foreground">Receipt records grouped by transaction or upload month.</p>
               </div>
               <Badge variant="neutral">MYR</Badge>
             </CardHeader>
             <CardContent>
-              {documentInsights && !error ? (
-                <div className="min-w-0">
-                  <ResponsiveContainer width="100%" height={260}>
-                    <BarChart data={chartData}>
-                      <XAxis dataKey="month" stroke="currentColor" fontSize={12} tickLine={false} axisLine={false} />
-                      <YAxis stroke="currentColor" fontSize={12} tickLine={false} axisLine={false} />
-                      <Tooltip
-                        cursor={{ fill: 'color-mix(in oklch, var(--primary) 10%, transparent)' }}
-                        contentStyle={{ background: 'var(--popover)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--popover-foreground)' }}
-                      />
-                      <Bar dataKey="spend" fill="var(--primary)" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              ) : (
-                <Skeleton className="h-[260px] min-w-0" />
-              )}
+              {insights && !error ? <SpendBarChart data={insights.monthlySpend} /> : <Skeleton className="h-[280px] min-w-0" />}
             </CardContent>
           </Card>
 
           <Card variant="surface">
             <CardHeader>
-              <CardTitle>Attention queue</CardTitle>
-              <p className="text-sm text-muted-foreground">Extraction and claim work that needs action.</p>
+              <CardTitle>Record Readiness</CardTitle>
+              <p className="text-sm text-muted-foreground">Actionable extraction and filing signals.</p>
             </CardHeader>
             <CardContent className="grid gap-3">
-              {documentInsights ? (
+              {insights ? (
                 <>
-                  <QueueLine label="Needs review" value={documentInsights.statusCounts.correction_required ?? 0} href="/app/documents" />
-                  <QueueLine label="Failed extraction" value={documentInsights.statusCounts.failed ?? 0} href="/app/documents" />
-                  <QueueLine label="Approved claims" value={claimInsights?.statusCounts.approved ?? 0} href="/app/claims" />
-                  <QueueLine label="Rejected claims" value={claimInsights?.statusCounts.rejected ?? 0} href="/app/claims" />
+                  <QueueLine label="Review extracted values" value={insights.statusCounts.correction_required ?? 0} href="/app/documents" />
+                  <QueueLine label="Retry failed extraction" value={insights.statusCounts.failed ?? 0} href="/app/documents" />
+                  <QueueLine label="Open spend insights" value={insights.categorySpend.length} href="/app/insights" />
+                  <QueueLine label="Check budgets" value={insights.recordTypeSpend.length} href="/app/budget" />
                 </>
               ) : (
                 <Skeleton className="h-32" />
@@ -149,26 +124,30 @@ function DashboardContent() {
         <div className="grid gap-4 xl:grid-cols-2">
           <Card variant="surface">
             <CardHeader>
-              <CardTitle>Merchant leaderboard</CardTitle>
+              <CardTitle>Top Spend Categories</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-2">
-              {(documentInsights?.merchantSpend.slice(0, 6) ?? []).map((merchant) => (
-                <div key={merchant.merchantName} className="grid grid-cols-[1fr_auto] gap-3 rounded-md border border-border bg-background/60 px-3 py-2">
-                  <span className="truncate text-sm">{merchant.merchantName}</span>
-                  <span className="font-mono text-sm tabular-nums">{formatMoney(merchant.amountMinor)}</span>
-                </div>
+              {(insights?.categorySpend.slice(0, 6) ?? []).map((category) => (
+                <Link key={category.category} href="/app/insights" className="grid grid-cols-[1fr_auto] gap-3 rounded-md border border-border bg-background/60 px-3 py-2 hover:bg-muted">
+                  <span className="truncate text-sm">{categoryLabel(category.category)}</span>
+                  <span className="font-mono text-sm tabular-nums">{formatMoney(category.amountMinor)}</span>
+                </Link>
               ))}
             </CardContent>
           </Card>
 
           <Card variant="surface">
-            <CardHeader>
-              <CardTitle>Recent activity</CardTitle>
+            <CardHeader className="flex-row items-center justify-between">
+              <CardTitle>Recent Activity</CardTitle>
+              {insights?.lastUpdatedAt && <span className="text-xs text-muted-foreground">Updated {formatDateTime(insights.lastUpdatedAt)}</span>}
             </CardHeader>
             <CardContent className="grid gap-2">
-              {(documentInsights?.recentDocuments.slice(0, 6) ?? []).map((document) => (
+              {(insights?.recentDocuments.slice(0, 6) ?? []).map((document) => (
                 <Link key={document.id} href={`/app/documents/${document.id}`} className="grid grid-cols-[1fr_auto] gap-3 rounded-md border border-border bg-background/60 px-3 py-2 text-sm hover:bg-muted">
-                  <span className="truncate">{document.merchantName ?? document.originalFilename}</span>
+                  <span className="min-w-0">
+                    <span className="block truncate">{document.merchantName ?? document.originalFilename}</span>
+                    <span className="text-xs text-muted-foreground">{formatDateTime(document.updatedAt)}</span>
+                  </span>
                   <span className="font-mono text-muted-foreground">{formatMoney(document.amountMinor, document.currency ?? 'MYR')}</span>
                 </Link>
               ))}
@@ -180,7 +159,7 @@ function DashboardContent() {
   );
 }
 
-function MetricCard({ icon: Icon, label, value, detail, size }: { icon: React.ElementType; label: string; value: string; detail: string; size?: 'large' }) {
+function MetricCard({ icon: Icon, label, value, detail, size }: { icon: ElementType; label: string; value: string; detail: string; size?: 'large' }) {
   return (
     <motion.div
       variants={{ hidden: { opacity: 0, y: 12 }, visible: { opacity: 1, y: 0 } }}

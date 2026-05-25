@@ -70,9 +70,9 @@ function AdminContent() {
         <div>
           <p className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
             <DatabaseZap className="size-4" />
-            Admin workspace
+            Admin Console
           </p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight">System danger zone</h1>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight">System Danger Zone</h1>
           <p className="mt-2 max-w-2xl text-muted-foreground">
             Bulk reset is intentionally isolated from the review and audit queues. It should only be used for local demo cleanup.
           </p>
@@ -82,7 +82,7 @@ function AdminContent() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-destructive">
               <AlertTriangle className="size-5" />
-              Reset all data
+              Reset All Data
             </CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4">

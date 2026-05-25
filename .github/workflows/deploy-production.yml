@@ -221,3 +221,10 @@ jobs:
           path: deployment-manifest.json
           retention-days: 30
           if-no-files-found: error
+
+      - name: Collect deployment diagnostics
+        if: ${{ failure() }}
+        env:
+          GITHUB_JOB_ID: ${{ github.job }}
+        run: |
+          bash scripts/deploy/diagnose-deploy-failure.sh

@@ -23,7 +23,7 @@ function member(id: string, role: AuthUser['role']): AuthUser {
 }
 
 describe('role routing and permission helpers', () => {
-  it('routes roles to their default workspace', () => {
+  it('routes roles to their default application area', () => {
     expect(homeForRole('consumer')).toBe('/app');
     expect(homeForRole('staff')).toBe('/enterprise/documents');
     expect(homeForRole('reviewer')).toBe('/enterprise/reviews');

@@ -126,4 +126,49 @@ export class AuthService {
     const accessToken = await this.jwt.sign({ sub: user.id, role: user.role, email: user.email });
     return { user: this.toPublicUser(user), accessToken };
   }
+
+  async updateAccount(
+    userId: string,
+    input: { displayName?: string | undefined; email?: string | undefined; currentPassword?: string | undefined; newPassword?: string | undefined }
+  ): Promise<{ user: PublicUser }> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throwContractHttpError(401, 'AUTH_INVALID_TOKEN', 'Invalid or expired token', []);
+    }
+
+    const sensitiveChange = Boolean(input.email && input.email !== user.email) || Boolean(input.newPassword);
+    if (sensitiveChange) {
+      if (!input.currentPassword) {
+        throwContractHttpError(422, 'VALIDATION_ERROR', 'Current password is required', [
+          { path: 'currentPassword', message: 'Current password is required for email or password changes' }
+        ]);
+      }
+
+      const ok = await bcrypt.compare(this.peppered(input.currentPassword), user.passwordHash);
+      if (!ok) {
+        throwContractHttpError(401, 'AUTH_INVALID_CREDENTIALS', 'Current password is incorrect', []);
+      }
+    }
+
+    const data: { displayName?: string; email?: string; passwordHash?: string } = {};
+    if (input.displayName !== undefined) data.displayName = input.displayName;
+    if (input.email && input.email !== user.email) data.email = input.email;
+    if (input.newPassword) data.passwordHash = await bcrypt.hash(this.peppered(input.newPassword), 10);
+
+    if (Object.keys(data).length === 0) {
+      return { user: this.toPublicUser(user) };
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id: user.id },
+      data
+    }).catch((error: unknown) => {
+      if (isPrismaKnownErrorCode(error, 'P2002') && prismaTargetIncludes(error, 'email')) {
+        throwContractHttpError(409, 'AUTH_EMAIL_EXISTS', 'An account with this email already exists', []);
+      }
+      throw error;
+    });
+
+    return { user: this.toPublicUser(updated) };
+  }
 }

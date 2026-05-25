@@ -127,6 +127,7 @@ export async function ensureSeedUsers(prisma: PrismaClient) {
 
 export async function resetWorkflowData(prisma: PrismaClient) {
   await prisma.auditEvent.deleteMany({});
+  await prisma.budget.deleteMany({});
   await prisma.review.deleteMany({});
   await prisma.claim.deleteMany({});
   await prisma.extractionJob.deleteMany({});
@@ -166,6 +167,7 @@ export async function createDocument(
     amountMinor?: number | null;
     currency?: string | null;
     category?: string | null;
+    documentType?: string | null;
     organizationId?: string | null;
   }
 ) {
@@ -186,7 +188,8 @@ export async function createDocument(
       transactionDate: input.transactionDate ?? input.documentDate ?? '2026-05-16',
       amountMinor: input.amountMinor ?? 1299,
       currency: input.currency ?? 'AUD',
-      category: input.category ?? null
+      category: input.category ?? null,
+      documentType: input.documentType ?? null
     }
   });
 }

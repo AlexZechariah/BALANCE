@@ -5,6 +5,9 @@ import {
   REVIEW_STATUSES,
   EXTRACTION_PROVIDERS,
   FIELD_NAMES,
+  BALANCE_CATEGORIES,
+  CONSUMER_RECORD_TYPES,
+  ENTERPRISE_CLAIM_INTENTS,
   type ClaimStatus,
   type DocumentStatus,
   type ReviewStatus
@@ -19,6 +22,27 @@ const optionalNullableTrimmedString = z.preprocess(
   (value) => (typeof value === 'string' && value.trim().length === 0 ? null : value),
   z.string().trim().nullable().optional()
 );
+
+const normalizeCategoryInput = (value: unknown) => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  return value.trim().toLowerCase().replace(/[\s-]+/g, '_');
+};
+
+const categorySchema = z.preprocess(
+  normalizeCategoryInput,
+  z.enum(BALANCE_CATEGORIES, { message: 'Category is required' })
+);
+
+const optionalNullableCategorySchema = z.preprocess((value) => {
+  if (typeof value === 'string' && value.trim().length === 0) {
+    return null;
+  }
+
+  return normalizeCategoryInput(value);
+}, z.enum(BALANCE_CATEGORIES).nullable().optional());
 
 const passwordSchema = z
   .string()
@@ -42,11 +66,12 @@ export const registerRequestSchema = z.object({
 });
 
 export const documentUploadMetadataSchema = z.object({
-  label: optionalNullableTrimmedString,
+  label: z.string().trim().min(1, 'Label is required').max(120, 'Label must not exceed 120 characters'),
   notes: optionalNullableTrimmedString,
-  category: optionalNullableTrimmedString,
+  documentType: z.enum(CONSUMER_RECORD_TYPES).optional(),
+  category: categorySchema,
   tags: optionalNullableTrimmedString,
-  claimIntent: optionalNullableTrimmedString
+  claimIntent: z.enum(ENTERPRISE_CLAIM_INTENTS).nullable().optional()
 });
 
 export const documentListQuerySchema = z.object({
@@ -54,7 +79,7 @@ export const documentListQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).optional(),
   status: z.enum(DOCUMENT_STATUSES).optional(),
   search: optionalTrimmedString,
-  category: optionalTrimmedString,
+  category: categorySchema.optional(),
   from: optionalTrimmedString,
   to: optionalTrimmedString,
   minAmount: z.coerce.number().int().min(0).optional(),
@@ -78,9 +103,10 @@ export const extractionRetrySchema = z.object({
 });
 
 export const documentMetadataPatchSchema = z.object({
-  label: optionalNullableTrimmedString,
+  label: z.string().trim().min(1, 'Label is required').max(120, 'Label must not exceed 120 characters').nullable().optional(),
   notes: optionalNullableTrimmedString,
-  category: optionalNullableTrimmedString,
+  category: optionalNullableCategorySchema,
+  documentType: z.enum(CONSUMER_RECORD_TYPES).nullable().optional(),
   tags: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
   retentionUntil: z.string().datetime().nullable().optional()
 });
@@ -125,6 +151,35 @@ export const auditQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).optional()
 });
 
+export const accountUpdateRequestSchema = z.object({
+  displayName: z.string().trim().min(1, 'Display name is required').max(100, 'Display name must not exceed 100 characters').optional(),
+  email: z.string().email('Invalid email address').optional(),
+  currentPassword: z.string().min(1, 'Current password is required').optional(),
+  newPassword: passwordSchema.optional()
+}).superRefine((value, ctx) => {
+  if ((value.email || value.newPassword) && !value.currentPassword) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['currentPassword'],
+      message: 'Current password is required for email or password changes'
+    });
+  }
+});
+
+export const budgetCreateRequestSchema = z.object({
+  category: categorySchema,
+  amountMinor: z.coerce.number().int().min(0, 'Budget amount must be zero or greater').max(100_000_000, 'Budget amount is too large'),
+  currency: z.string().trim().length(3).optional()
+});
+
+export const budgetUpdateRequestSchema = z.object({
+  category: categorySchema.optional(),
+  amountMinor: z.coerce.number().int().min(0, 'Budget amount must be zero or greater').max(100_000_000, 'Budget amount is too large').optional(),
+  currency: z.string().trim().length(3).optional()
+}).refine((value) => value.category !== undefined || value.amountMinor !== undefined || value.currency !== undefined, {
+  message: 'At least one budget field is required'
+});
+
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
 export type RegisterRequest = z.infer<typeof registerRequestSchema>;
 export type DocumentUploadMetadata = z.infer<typeof documentUploadMetadataSchema>;
@@ -137,6 +192,9 @@ export type ClaimListQuery = z.infer<typeof claimListQuerySchema> & { status?: C
 export type ReviewQueueQuery = z.infer<typeof reviewQueueQuerySchema> & { status?: ReviewStatus };
 export type ReviewApprovePayload = z.infer<typeof reviewApprovePayloadSchema>;
 export type ReviewRejectPayload = z.infer<typeof reviewRejectPayloadSchema>;
+export type AccountUpdateRequest = z.infer<typeof accountUpdateRequestSchema>;
+export type BudgetCreateRequest = z.infer<typeof budgetCreateRequestSchema>;
+export type BudgetUpdateRequest = z.infer<typeof budgetUpdateRequestSchema>;
 export const createMemberRequestSchema = z.object({
   email: z.string().email('Invalid email address'),
   password: passwordSchema,
@@ -152,3 +210,18 @@ export const updateMemberRoleRequestSchema = z.object({
 });
 
 export type UpdateMemberRoleRequest = z.infer<typeof updateMemberRoleRequestSchema>;
+
+export const updateMemberRequestSchema = z.object({
+  displayName: z.string().trim().min(1, 'Display name is required').max(100, 'Display name must not exceed 100 characters').optional(),
+  email: z.string().email('Invalid email address').optional(),
+  role: z.enum(['staff', 'reviewer', 'admin']).optional(),
+}).refine((value) => value.displayName !== undefined || value.email !== undefined || value.role !== undefined, {
+  message: 'At least one member field is required'
+});
+
+export const resetMemberPasswordRequestSchema = z.object({
+  password: passwordSchema,
+});
+
+export type UpdateMemberRequest = z.infer<typeof updateMemberRequestSchema>;
+export type ResetMemberPasswordRequest = z.infer<typeof resetMemberPasswordRequestSchema>;

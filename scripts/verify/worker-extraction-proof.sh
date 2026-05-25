@@ -155,6 +155,7 @@ assert(imageBytes.length > 0, 'proof receipt fixture is empty');
 
 const form = new FormData();
 form.set('label', 'Worker extraction proof');
+form.set('category', 'other');
 form.set('notes', 'Deterministic OCR proof fixture');
 form.set('file', new Blob([imageBytes], { type: 'image/jpeg' }), 'proof-receipt.jpg');
 

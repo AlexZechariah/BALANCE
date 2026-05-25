@@ -40,6 +40,23 @@ export async function updateMemberRole(id: string, role: EnterpriseMemberRole): 
   });
 }
 
+export async function updateMember(
+  id: string,
+  input: { displayName?: string | undefined; email?: string | undefined; role?: EnterpriseMemberRole | undefined },
+): Promise<{ member: AuthUser }> {
+  return apiRequest<{ member: AuthUser }>(`/enterprise/members/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function resetMemberPassword(id: string, password: string): Promise<{ ok: boolean }> {
+  return apiRequest<{ ok: boolean }>(`/enterprise/members/${id}/password`, {
+    method: 'PATCH',
+    body: JSON.stringify({ password }),
+  });
+}
+
 export type EnterpriseMemberRole = 'staff' | 'reviewer' | 'admin';
 
 export interface EnterpriseClaimListItem {

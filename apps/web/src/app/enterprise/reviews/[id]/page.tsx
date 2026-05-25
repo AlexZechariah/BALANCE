@@ -128,7 +128,7 @@ function ReviewDetailContent() {
     <div className="grid gap-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <Link href="/enterprise/reviews" className="mb-2 inline-block text-xs text-muted-foreground hover:text-foreground">Review queue</Link>
+          <Link href="/enterprise/reviews" className="mb-2 inline-block text-xs text-muted-foreground hover:text-foreground">Review Queue</Link>
           <h1 className="text-2xl font-semibold tracking-tight">{review.document.originalFilename}</h1>
           <p className="mt-1 text-xs text-muted-foreground">Claim: {review.claim.purpose}</p>
         </div>
@@ -140,12 +140,12 @@ function ReviewDetailContent() {
         <div className="grid content-start gap-5">
       {/* Document info */}
       <Card>
-        <CardHeader><CardTitle>Evidence summary</CardTitle></CardHeader>
+        <CardHeader><CardTitle>Evidence Summary</CardTitle></CardHeader>
         <CardContent className="grid grid-cols-2 gap-3 text-sm">
           <div><p className="text-xs text-muted-foreground">Merchant</p><p>{review.document.merchantName ?? 'Not captured'}</p></div>
           <div><p className="text-xs text-muted-foreground">Amount</p><p className="font-mono tabular-nums">{formatMoney(review.document.amountMinor, review.document.currency ?? 'MYR')}</p></div>
           <div><p className="text-xs text-muted-foreground">Date</p><p className="font-mono text-xs tabular-nums">{review.document.documentDate ?? 'Not captured'}</p></div>
-          <div><p className="text-xs text-muted-foreground">Document status</p><StatusBadge status={review.document.status} /></div>
+          <div><p className="text-xs text-muted-foreground">Document Status</p><StatusBadge status={review.document.status} /></div>
           {review.reviewerId && review.status === 'in_review' && (
             <div className="col-span-2">
               <p className="text-xs font-medium text-muted-foreground">Assigned to</p>
@@ -162,7 +162,7 @@ function ReviewDetailContent() {
       </Alert>
 
       <Card>
-        <CardHeader><CardTitle>Reviewer checklist</CardTitle></CardHeader>
+      <CardHeader><CardTitle>Reviewer Checklist</CardTitle></CardHeader>
         <CardContent className="grid gap-2 sm:grid-cols-2">
           {['Merchant matches proof', 'Date is captured', 'Total reconciles', 'Payment proof visible', 'Claim purpose matches policy', 'Line items look plausible'].map((item) => (
             <div key={item} className="flex items-center gap-2 rounded-md border border-border bg-background/60 px-3 py-2 text-sm">
@@ -252,7 +252,7 @@ function ReviewDetailContent() {
       {/* Extracted fields */}
       {review.document.fields.length > 0 && (
         <Card>
-          <CardHeader><CardTitle>Extracted fields</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Extracted Fields</CardTitle></CardHeader>
           <CardContent>
           <div className="grid gap-2 md:grid-cols-2">
             {review.document.fields.map((field) => (
@@ -275,7 +275,7 @@ function ReviewDetailContent() {
       {/* Audit timeline */}
       {review.auditEvents.length > 0 && (
         <Card>
-          <CardHeader><CardTitle>Audit timeline</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Audit Timeline</CardTitle></CardHeader>
           <CardContent className="grid gap-2">
             {review.auditEvents.map((event) => (
               <div key={event.id} className="grid gap-2 rounded-md border border-border bg-background/60 px-3 py-2 text-xs md:grid-cols-[10rem_1fr_auto]">

@@ -29,6 +29,18 @@ export async function getCurrentUser(): Promise<AuthUser> {
   return data.user;
 }
 
+export async function updateAccount(input: {
+  displayName?: string | undefined;
+  email?: string | undefined;
+  currentPassword?: string | undefined;
+  newPassword?: string | undefined;
+}): Promise<{ user: AuthUser }> {
+  return apiRequest<{ user: AuthUser }>('/auth/me', {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
 export async function register(
   email: string,
   password: string,

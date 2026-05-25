@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
+import { Clock, FileWarning, UserCircle } from 'lucide-react';
 
 import { RouteGuard } from '@/components/route-guard';
 import { EnterpriseLayout } from '@/components/enterprise-layout';
@@ -18,7 +19,8 @@ import { BalanceApiError } from '@/lib/api/client';
 import { Alert } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { formatMoney } from '@/lib/format';
+import { formatDateTime, formatMoney } from '@/lib/format';
+import { statusLabel } from '@/lib/display-labels';
 import { PageTransition } from '@/components/workspace/page-transition';
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -56,6 +58,30 @@ function getEnterpriseTimelineSteps(claim: Claim): StepTimelineStep[] {
 
 function getClaimNumber(id: string): string {
   return `#${id.slice(0, 8)}`;
+}
+
+function getAgeLabel(claim: Claim): string {
+  const anchor = claim.submittedAt ?? claim.createdAt;
+  if (!anchor) return 'Not submitted';
+  const hours = Math.max(0, Math.round((Date.now() - new Date(anchor).getTime()) / 36e5));
+  if (hours < 1) return 'Less than 1h';
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+}
+
+function CaseMetric({ icon, label, value, detail }: { icon?: ReactNode; label: string; value: string; detail?: string }) {
+  return (
+    <Card variant="surface">
+      <CardContent className="grid gap-2 p-4">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          {icon}
+          {label}
+        </div>
+        <p className="min-h-6 truncate text-sm font-semibold">{value}</p>
+        {detail && <p className="truncate text-xs text-muted-foreground">{detail}</p>}
+      </CardContent>
+    </Card>
+  );
 }
 
 // ── Page ───────────────────────────────────────────────────────────
@@ -157,6 +183,7 @@ function EnterpriseClaimDetailContent() {
   const consumer = claim.consumer;
   const displayName = consumer?.displayName ?? 'Unknown';
   const email = consumer?.email ?? '';
+  const ageLabel = getAgeLabel(claim);
 
   return (
     <PageTransition>
@@ -168,21 +195,37 @@ function EnterpriseClaimDetailContent() {
       )}
 
       {/* ── Header ──────────────────────────────────────────────── */}
-      <div className="mb-6 flex items-start justify-between gap-4">
+      <div className="mb-6 flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
         <div>
-          <p className="text-sm text-muted-foreground">Claim detail</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight">
-            {claim.document?.originalFilename ?? `Claim ${getClaimNumber(claim.id)}`}
-          </h1>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Claim: {claim.purpose}
-          </p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            by {displayName}{email ? ` \u00b7 ${email}` : ''}
-          </p>
+          <p className="text-sm text-muted-foreground">Decision case file {getClaimNumber(claim.id)}</p>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight">Claim Review</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{claim.purpose}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{claim.document?.originalFilename ?? 'No source document attached'}</p>
         </div>
-        <StatusBadge status={claim.status} />
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusBadge status={claim.status} />
+          <div className="inline-flex min-h-9 items-center gap-2 rounded-md border border-border bg-card px-3 text-xs text-muted-foreground">
+            <Clock className="size-4" />
+            Age {ageLabel}
+          </div>
+        </div>
       </div>
+
+      <div className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <CaseMetric icon={<UserCircle className="size-4" />} label="Claimant" value={displayName} detail={email} />
+        <CaseMetric label="Amount" value={formatMoney(claim.document?.amountMinor, claim.document?.currency ?? 'MYR')} detail={claim.document?.merchantName ?? 'Merchant not captured'} />
+        <CaseMetric label="Decision State" value={statusLabel(claim.status)} detail={claim.decidedAt ? formatDateTime(claim.decidedAt) : 'Awaiting decision'} />
+        <CaseMetric icon={<FileWarning className="size-4" />} label="Review Risk" value={hasLowConfidence ? 'Needs Attention' : 'Ready To Review'} detail={hasLowConfidence ? 'Low-confidence fields present' : 'Confidence acceptable'} />
+      </div>
+
+      {claim.note && (
+        <Card variant="surface" className="mb-5">
+          <CardContent className="p-4 text-sm">
+            <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">Policy or context notes</p>
+            <p className="mt-2">{claim.note}</p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* ── Two-column layout ────────────────────────────────────── */}
       <div className="grid gap-5 xl:grid-cols-[minmax(360px,0.9fr)_minmax(400px,1.1fr)]">
@@ -202,7 +245,7 @@ function EnterpriseClaimDetailContent() {
           {/* Evidence Summary */}
           <Card>
             <CardHeader>
-              <CardTitle>Evidence summary</CardTitle>
+              <CardTitle>Reviewer Summary</CardTitle>
             </CardHeader>
             <CardContent className="grid grid-cols-2 gap-3 text-sm">
               <div>
@@ -222,8 +265,12 @@ function EnterpriseClaimDetailContent() {
                 </div>
               )}
               <div>
-                <p className="text-xs text-muted-foreground">Document status</p>
+                <p className="text-xs text-muted-foreground">Document Status</p>
                 <StatusBadge status={claim.document?.status ?? 'uploaded'} />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Reviewer</p>
+                <p>{isCurrentReviewer ? 'Assigned To You' : claim.review?.reviewerId ? 'Assigned' : 'Unassigned'}</p>
               </div>
             </CardContent>
           </Card>
@@ -259,15 +306,20 @@ function EnterpriseClaimDetailContent() {
 
       {/* ── Full-width sections ──────────────────────────────────── */}
 
-      {/* Extracted fields */}
+      {/* Document Information */}
       {hasFields && (
         <div className="mt-5">
-          <ClaimReviewPanel
-            fields={claim.document!.fields as FieldItem[]}
-            documentId={claim.document!.id}
-            editable={fieldsEditable}
-            onCorrectionsSaved={loadClaim}
-          />
+          <details className="rounded-lg border border-border bg-card">
+            <summary className="cursor-pointer px-5 py-4 text-sm font-semibold">Document Information</summary>
+            <div className="border-t border-border p-5">
+              <ClaimReviewPanel
+                fields={claim.document!.fields as FieldItem[]}
+                documentId={claim.document!.id}
+                editable={fieldsEditable}
+                onCorrectionsSaved={loadClaim}
+              />
+            </div>
+          </details>
         </div>
       )}
 
@@ -288,7 +340,7 @@ function EnterpriseClaimDetailContent() {
         <div className="mt-5">
           <Card>
             <CardHeader>
-              <CardTitle>Audit trail</CardTitle>
+              <CardTitle>Audit Trail</CardTitle>
             </CardHeader>
             <CardContent>
               <AuditTrail events={claim.auditEvents} />

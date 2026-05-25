@@ -76,12 +76,11 @@ services:
       timeout: 3s
       retries: 20
     volumes:
-      # CI proof stacks run from the baked image (no live bind mount).
-      # A relative bind mount here would be resolved relative to this compose file
-      # directory (`infra/compose`), which breaks the worker import path and causes:
-      # "Could not import module app.main".
+      # CI proof stacks run from the baked image (no live source bind mount).
+      # Docker Compose resolves relative bind sources from this compose file's directory,
+      # so ../../tmp/balance-storage targets <repo>/tmp/balance-storage.
       - type: bind
-        source: ${BALANCE_STORAGE_HOST_PATH:-tmp/balance-storage}
+        source: ${BALANCE_STORAGE_HOST_PATH:-../../tmp/balance-storage}
         target: /data/balance-storage
     # In CI proofs we prefer failing fast (and keeping logs) over restart loops.
     restart: "no"
@@ -127,7 +126,7 @@ services:
         condition: service_healthy
     volumes:
       - type: bind
-        source: ${BALANCE_STORAGE_HOST_PATH:-tmp/balance-storage}
+        source: ${BALANCE_STORAGE_HOST_PATH:-../../tmp/balance-storage}
         target: /data/balance-storage
     # In CI proofs we prefer failing fast (and keeping logs) over restart loops.
     restart: "no"

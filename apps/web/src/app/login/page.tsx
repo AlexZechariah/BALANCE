@@ -3,10 +3,11 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { Eye, EyeOff, ReceiptText } from 'lucide-react';
 import { useAuth } from '../../context/auth-context';
 import { BalanceApiError } from '../../lib/api/client';
 import { homeForRole } from '../../lib/auth-routing';
+import { BalanceIcon } from '@/components/brand/BalanceIcon';
+import { PasswordField } from '@/components/forms/password-field';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -22,8 +23,6 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-
   // Redirect already-authenticated users.
   // Must happen in an effect (not during render) to avoid React's
   // "Cannot update a component (Router) while rendering a different component" warning.
@@ -69,12 +68,10 @@ export default function LoginPage() {
       <Card variant="panel" className="w-full max-w-md">
         <CardHeader>
           <div className="mb-2 flex items-center gap-2">
-            <span className="flex size-9 items-center justify-center rounded-md border border-primary/25 bg-primary/10 text-primary">
-              <ReceiptText className="size-5" />
-            </span>
+            <BalanceIcon className="size-6" aria-hidden="true" />
             <span className="text-lg font-semibold font-display">Balance</span>
           </div>
-          <CardTitle className="text-2xl">Sign in</CardTitle>
+          <CardTitle className="text-2xl">Sign In</CardTitle>
           <p className="text-sm text-muted-foreground">Access documents, claims, reviews, and audit history.</p>
         </CardHeader>
 
@@ -93,31 +90,15 @@ export default function LoginPage() {
               />
             </div>
 
-            <div>
-              <Label htmlFor="password">Password</Label>
-              <div className="relative">
-                <Input
-                  id="password"
-                  type={showPassword ? 'text' : 'password'}
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  disabled={submitting}
-                  className="pr-10"
-                  placeholder="Password"
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  className="absolute right-0 top-0"
-                  onClick={() => setShowPassword((value) => !value)}
-                >
-                  {showPassword ? <EyeOff /> : <Eye />}
-                </Button>
-              </div>
-            </div>
+            <PasswordField
+              id="password"
+              label="Password"
+              autoComplete="current-password"
+              value={password}
+              onChange={setPassword}
+              disabled={submitting}
+              placeholder="Password"
+            />
 
             {error && (
               <Alert role="alert" variant="destructive">{error}</Alert>

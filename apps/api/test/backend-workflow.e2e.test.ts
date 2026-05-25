@@ -112,6 +112,62 @@ describe.sequential('Balance API backend workflow', () => {
       });
   });
 
+  it('proves account settings require current password for sensitive changes', async () => {
+    const suffix = Date.now().toString(36);
+    const initialEmail = `consumer-settings-${suffix}@balance.local`;
+    const updatedEmail = `consumer-settings-updated-${suffix}@balance.local`;
+
+    const registered = await request(ctx.app.getHttpServer())
+      .post('/auth/register')
+      .send({
+        email: initialEmail,
+        password: 'ValidPass1!',
+        displayName: 'Settings User'
+      })
+      .expect(201);
+
+    await request(ctx.app.getHttpServer())
+      .patch('/auth/me')
+      .set('Authorization', auth(registered.body.accessToken))
+      .send({ displayName: 'Updated Settings User' })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.user.displayName).toBe('Updated Settings User');
+        expect(response.body.user.email).toBe(initialEmail);
+      });
+
+    await request(ctx.app.getHttpServer())
+      .patch('/auth/me')
+      .set('Authorization', auth(registered.body.accessToken))
+      .send({ email: updatedEmail })
+      .expect(422);
+
+    await request(ctx.app.getHttpServer())
+      .patch('/auth/me')
+      .set('Authorization', auth(registered.body.accessToken))
+      .send({ email: updatedEmail, currentPassword: 'WrongPass1!' })
+      .expect(401);
+
+    await request(ctx.app.getHttpServer())
+      .patch('/auth/me')
+      .set('Authorization', auth(registered.body.accessToken))
+      .send({ email: updatedEmail, currentPassword: 'ValidPass1!', newPassword: 'NextPass1!' })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.user.email).toBe(updatedEmail);
+      });
+
+    await request(ctx.app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: updatedEmail, password: 'ValidPass1!' })
+      .expect(401);
+
+    await request(ctx.app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: updatedEmail, password: 'NextPass1!' })
+      .expect(200);
+  });
+
   it('proves enterprise member and global admin boundaries', async () => {
     const orgAdmin = await login(ctx.app, 'orgAdmin');
     const systemAdmin = await login(ctx.app, 'admin');
@@ -177,6 +233,43 @@ describe.sequential('Balance API backend workflow', () => {
         expect(response.body.members.some((member: { email: string }) => member.email === staffEmail)).toBe(true);
       });
 
+    const editedStaffEmail = `edited-${staffEmail}`;
+    await request(ctx.app.getHttpServer())
+      .patch(`/enterprise/members/${created.body.member.id}`)
+      .set('Authorization', auth(orgAdmin.token))
+      .send({ displayName: 'Updated Team Staff', email: editedStaffEmail, role: 'reviewer' })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.member).toMatchObject({
+          displayName: 'Updated Team Staff',
+          email: editedStaffEmail,
+          role: 'reviewer',
+          organizationId: orgAdmin.user.organizationId
+        });
+      });
+
+    await request(ctx.app.getHttpServer())
+      .patch(`/enterprise/members/${created.body.member.id}/password`)
+      .set('Authorization', auth(orgAdmin.token))
+      .send({ password: 'ResetPass1!' })
+      .expect(200);
+
+    await request(ctx.app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: editedStaffEmail, password: 'ValidPass1!' })
+      .expect(401);
+
+    await request(ctx.app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: editedStaffEmail, password: 'ResetPass1!' })
+      .expect(200);
+
+    await request(ctx.app.getHttpServer())
+      .patch(`/enterprise/members/${orgAdmin.user.id}/password`)
+      .set('Authorization', auth(orgAdmin.token))
+      .send({ password: 'ResetPass1!' })
+      .expect(403);
+
     await request(ctx.app.getHttpServer())
       .delete(`/enterprise/members/${orgAdmin.user.id}`)
       .set('Authorization', auth(orgAdmin.token))
@@ -236,6 +329,8 @@ describe.sequential('Balance API backend workflow', () => {
     const upload = await request(ctx.app.getHttpServer())
       .post('/documents')
       .set('Authorization', auth(staff.token))
+      .field('label', 'Staff review receipt')
+      .field('category', 'software')
       .attach('file', Buffer.from('%PDF-1.4\n% Balance staff test\n'), {
         filename: `staff-${suffix}.pdf`,
         contentType: 'application/pdf'
@@ -267,6 +362,7 @@ describe.sequential('Balance API backend workflow', () => {
       where: { action: 'claim.submitted', reviewId }
     });
     expect(submittedAudit?.actorRole).toBe('staff');
+    expect(submittedAudit?.organizationId).toBe(staff.user.organizationId);
 
     await request(ctx.app.getHttpServer())
       .get('/reviews/queue')
@@ -309,6 +405,41 @@ describe.sequential('Balance API backend workflow', () => {
       .get(`/reviews/${reviewId}`)
       .set('Authorization', auth(otherOrg.body.accessToken))
       .expect(403);
+
+    const otherOrgDocument = await createDocument(ctx.prisma, {
+      ownerId: otherOrg.body.user.id,
+      organizationId: otherOrg.body.user.organizationId,
+      status: 'extracted',
+      originalFilename: `other-org-${suffix}.pdf`
+    });
+
+    await ctx.prisma.auditEvent.create({
+      data: {
+        action: 'document.uploaded',
+        entityType: 'document',
+        entityId: otherOrgDocument.id,
+        actorId: otherOrg.body.user.id,
+        actorRole: 'admin',
+        organizationId: otherOrg.body.user.organizationId,
+        documentId: otherOrgDocument.id,
+        message: 'Other organization document uploaded',
+        metadata: {}
+      }
+    });
+
+    const orgSummary = await request(ctx.app.getHttpServer())
+      .get('/audit/summary')
+      .set('Authorization', auth(orgAdmin.token))
+      .expect(200);
+
+    await request(ctx.app.getHttpServer())
+      .get('/audit')
+      .set('Authorization', auth(orgAdmin.token))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.page.total).toBe(orgSummary.body.summary.total);
+        expect(response.body.auditEvents.some((event: { entityId: string }) => event.entityId === otherOrgDocument.id)).toBe(false);
+      });
   });
 
   it('proves enterprise recall flow (submitted -> draft -> resubmit) and org-wide admin lists', async () => {
@@ -392,6 +523,8 @@ describe.sequential('Balance API backend workflow', () => {
       .set('Authorization', auth(consumer.token))
       .field('label', 'Travel receipt')
       .field('notes', 'Taxi from airport')
+      .field('documentType', 'tax')
+      .field('category', 'travel')
       .attach('file', Buffer.from('%PDF-1.4\n% Balance test file\n'), {
         filename: 'receipt.pdf',
         contentType: 'application/pdf'
@@ -404,7 +537,9 @@ describe.sequential('Balance API backend workflow', () => {
       contentType: 'application/pdf',
       status: 'queued',
       label: 'Travel receipt',
-      notes: 'Taxi from airport'
+      notes: 'Taxi from airport',
+      category: 'travel',
+      documentType: 'tax'
     });
     expect(upload.body.extractionJob).toMatchObject({
       documentId: upload.body.document.id,
@@ -581,7 +716,8 @@ describe.sequential('Balance API backend workflow', () => {
       transactionDate: currentDate,
       amountMinor: 5000,
       currency: 'MYR',
-      category: 'grocery'
+      category: 'grocery',
+      documentType: 'tax'
     });
 
     await ctx.prisma.documentField.createMany({
@@ -600,7 +736,8 @@ describe.sequential('Balance API backend workflow', () => {
       transactionDate: currentDate,
       amountMinor: 1000,
       currency: 'MYR',
-      category: 'grocery'
+      category: 'grocery',
+      documentType: 'warranty'
     });
 
     await createDocument(ctx.prisma, {
@@ -611,7 +748,8 @@ describe.sequential('Balance API backend workflow', () => {
       transactionDate: previousDate,
       amountMinor: 2500,
       currency: 'MYR',
-      category: 'restaurant'
+      category: 'restaurant',
+      documentType: 'return'
     });
 
     await ctx.prisma.claim.create({
@@ -637,7 +775,7 @@ describe.sequential('Balance API backend workflow', () => {
           totalTaxMinor: 300,
           totalServiceChargeMinor: 200,
           totalDiscountMinor: 100,
-          averageReceiptMinor: 2833,
+          averageReceiptMinor: 3000,
           statusCounts: { extracted: 2, failed: 1 },
           claimCounts: { submitted: 1 },
           mostFrequentMerchant: { merchantName: 'Alpha Grocer', count: 2 },
@@ -657,6 +795,14 @@ describe.sequential('Balance API backend workflow', () => {
             expect.objectContaining({ category: 'restaurant', amountMinor: 2500, count: 1 })
           ])
         );
+        expect(response.body.insights.recordTypeSpend).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ recordType: 'tax', amountMinor: 5000, count: 1 }),
+            expect.objectContaining({ recordType: 'warranty', amountMinor: 1000, count: 1 }),
+            expect.objectContaining({ recordType: 'return', amountMinor: 2500, count: 1 })
+          ])
+        );
+        expect(response.body.insights.lastUpdatedAt).toEqual(expect.any(String));
         expect(response.body.insights.recentDocuments).toHaveLength(3);
         expect(response.body.insights.recentClaims[0]).toMatchObject({
           documentId: currentDoc.id,
@@ -680,6 +826,124 @@ describe.sequential('Balance API backend workflow', () => {
           statusCounts: { draft: 0, submitted: 1, under_review: 0, approved: 0, rejected: 0 }
         });
       });
+  });
+
+  it('proves consumer budgets are current-month, user-owned, and spend-backed', async () => {
+    const consumer = await login(ctx.app, 'consumer');
+    const staff = await login(ctx.app, 'staff');
+    const suffix = Date.now().toString(36);
+    const now = new Date();
+    const currentDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-18`;
+
+    const otherConsumer = await request(ctx.app.getHttpServer())
+      .post('/auth/register')
+      .send({
+        email: `budget-other-${suffix}@balance.local`,
+        password: 'ValidPass1!',
+        displayName: 'Budget Other'
+      })
+      .expect(201);
+
+    await createDocument(ctx.prisma, {
+      ownerId: consumer.user.id,
+      status: 'extracted',
+      transactionDate: currentDate,
+      documentDate: currentDate,
+      amountMinor: 4000,
+      currency: 'MYR',
+      category: 'grocery'
+    });
+
+    await createDocument(ctx.prisma, {
+      ownerId: consumer.user.id,
+      status: 'extracted',
+      transactionDate: currentDate,
+      documentDate: currentDate,
+      amountMinor: 2000,
+      currency: 'MYR',
+      category: 'grocery'
+    });
+
+    await request(ctx.app.getHttpServer())
+      .get('/budgets')
+      .set('Authorization', auth(staff.token))
+      .expect(403);
+
+    const created = await request(ctx.app.getHttpServer())
+      .post('/budgets')
+      .set('Authorization', auth(consumer.token))
+      .send({ category: 'Grocery', amountMinor: 7000, currency: 'MYR' })
+      .expect(201);
+
+    expect(created.body.budget).toMatchObject({
+      userId: consumer.user.id,
+      category: 'grocery',
+      amountMinor: 7000,
+      actualMinor: 6000,
+      remainingMinor: 1000,
+      documentCount: 2,
+      isOverBudget: false
+    });
+
+    await request(ctx.app.getHttpServer())
+      .post('/budgets')
+      .set('Authorization', auth(consumer.token))
+      .send({ category: 'grocery', amountMinor: 8000 })
+      .expect(409);
+
+    await request(ctx.app.getHttpServer())
+      .get('/budgets')
+      .set('Authorization', auth(consumer.token))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.month).toBe(currentDate.slice(0, 7));
+        expect(response.body.budgets).toHaveLength(1);
+        expect(response.body.budgets[0].actualMinor).toBe(6000);
+      });
+
+    await request(ctx.app.getHttpServer())
+      .patch(`/budgets/${created.body.budget.id}`)
+      .set('Authorization', auth(otherConsumer.body.accessToken))
+      .send({ amountMinor: 5000 })
+      .expect(404);
+
+    await request(ctx.app.getHttpServer())
+      .patch(`/budgets/${created.body.budget.id}`)
+      .set('Authorization', auth(consumer.token))
+      .send({ amountMinor: 5000 })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.budget).toMatchObject({
+          amountMinor: 5000,
+          actualMinor: 6000,
+          remainingMinor: -1000,
+          isOverBudget: true
+        });
+      });
+
+    await request(ctx.app.getHttpServer())
+      .delete(`/budgets/${created.body.budget.id}`)
+      .set('Authorization', auth(otherConsumer.body.accessToken))
+      .expect(404);
+
+    await request(ctx.app.getHttpServer())
+      .delete(`/budgets/${created.body.budget.id}`)
+      .set('Authorization', auth(consumer.token))
+      .expect(200);
+
+    await request(ctx.app.getHttpServer())
+      .get('/budgets')
+      .set('Authorization', auth(consumer.token))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.budgets).toHaveLength(0);
+      });
+
+    const budgetActions = await ctx.prisma.auditEvent.findMany({
+      where: { entityType: 'budget', actorId: consumer.user.id },
+      orderBy: { createdAt: 'asc' }
+    });
+    expect(budgetActions.map((event) => event.action)).toEqual(['budget.created', 'budget.updated', 'budget.deleted']);
   });
 
   it('proves claim, review, explicit claim transition, decision, and audit behavior', async () => {

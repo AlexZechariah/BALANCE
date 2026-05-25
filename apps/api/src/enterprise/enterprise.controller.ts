@@ -3,10 +3,14 @@ import {
   claimListQuerySchema,
   createMemberRequestSchema,
   documentListQuerySchema,
+  resetMemberPasswordRequestSchema,
+  updateMemberRequestSchema,
   updateMemberRoleRequestSchema,
   type ClaimListQuery,
   type CreateMemberRequest,
   type DocumentListQuery,
+  type ResetMemberPasswordRequest,
+  type UpdateMemberRequest,
   type UpdateMemberRoleRequest
 } from '@balance/schemas';
 
@@ -114,5 +118,29 @@ export class EnterpriseController {
     @CurrentUser() user: AuthenticatedRequestUser
   ) {
     return this.enterprise.updateMemberRole(user.id, id, body.role);
+  }
+
+  @Patch('members/:id')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('admin')
+  @HttpCode(200)
+  async updateMember(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(updateMemberRequestSchema)) body: UpdateMemberRequest,
+    @CurrentUser() user: AuthenticatedRequestUser
+  ) {
+    return this.enterprise.updateMember(user.id, id, body);
+  }
+
+  @Patch('members/:id/password')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('admin')
+  @HttpCode(200)
+  async resetMemberPassword(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(resetMemberPasswordRequestSchema)) body: ResetMemberPasswordRequest,
+    @CurrentUser() user: AuthenticatedRequestUser
+  ) {
+    return this.enterprise.resetMemberPassword(user.id, id, body.password);
   }
 }

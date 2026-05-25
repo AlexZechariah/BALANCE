@@ -16,6 +16,21 @@ import { throwContractHttpError, throwValidationError } from '../common/contract
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { PrismaService } from '../prisma/prisma.service';
 
+const NO_VISIBLE_ORG_ID = '00000000-0000-0000-0000-000000000000';
+const DESTRUCTIVE_ACTIONS = ['document.deleted', 'claim.deleted', 'documents.bulk_deleted', 'budget.deleted'];
+
+function auditVisibilityWhere(user: AuthenticatedRequestUser): Prisma.AuditEventWhereInput {
+  if (isSystemAdminRole(user.role)) return {};
+  if (isOrgAdminRole(user.role)) {
+    return { organizationId: user.organizationId ?? NO_VISIBLE_ORG_ID };
+  }
+  return {};
+}
+
+function nonEmptyWhere(where: Prisma.AuditEventWhereInput): boolean {
+  return Object.keys(where).length > 0;
+}
+
 @Controller('audit')
 export class AuditController {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
@@ -27,40 +42,43 @@ export class AuditController {
     const since = new Date();
     since.setDate(since.getDate() - 30);
 
-    const orgFilter: Prisma.AuditEventWhereInput = {};
-    if (user.role === 'admin' && user.organizationId) {
-      orgFilter.organizationId = user.organizationId;
-    }
+    const visibilityWhere = auditVisibilityWhere(user);
 
-    const [total, byAction, byEntityType, byActorRole, recentFailures] = await Promise.all([
-      this.prisma.auditEvent.count({ where: orgFilter }),
+    const [total, byAction, byEntityType, byActorRole, recentFailures, failedExtractions, destructiveChanges] = await Promise.all([
+      this.prisma.auditEvent.count({ where: visibilityWhere }),
       this.prisma.auditEvent.groupBy({
         by: ['action'],
         _count: { _all: true },
-        where: orgFilter,
+        where: visibilityWhere,
         orderBy: { _count: { action: 'desc' } },
         take: 20
       }),
       this.prisma.auditEvent.groupBy({
         by: ['entityType'],
         _count: { _all: true },
-        where: orgFilter,
+        where: visibilityWhere,
         orderBy: { _count: { entityType: 'desc' } }
       }),
       this.prisma.auditEvent.groupBy({
         by: ['actorRole'],
         _count: { _all: true },
-        where: orgFilter,
+        where: visibilityWhere,
         orderBy: { _count: { actorRole: 'desc' } }
       }),
       this.prisma.auditEvent.findMany({
         where: {
-          ...orgFilter,
+          ...visibilityWhere,
           createdAt: { gte: since },
           action: { in: ['extraction.failed', 'review.rejected'] }
         },
         orderBy: { createdAt: 'desc' },
         take: 10
+      }),
+      this.prisma.auditEvent.count({
+        where: { AND: [visibilityWhere, { action: 'extraction.failed' }] }
+      }),
+      this.prisma.auditEvent.count({
+        where: { AND: [visibilityWhere, { action: { in: DESTRUCTIVE_ACTIONS } }] }
       })
     ]);
 
@@ -70,11 +88,16 @@ export class AuditController {
         byAction: byAction.map((item) => ({ action: item.action, count: item._count._all })),
         byEntityType: byEntityType.map((item) => ({ entityType: item.entityType, count: item._count._all })),
         byActorRole: byActorRole.map((item) => ({ actorRole: item.actorRole, count: item._count._all })),
+        failedExtractions,
+        destructiveChanges,
+        activeActorRoles: byActorRole.length,
         recentFailures: recentFailures.map((event) => ({
           id: event.id,
           action: event.action,
           entityType: event.entityType,
           entityId: event.entityId,
+          actorId: event.actorId,
+          actorRole: event.actorRole,
           message: event.message,
           metadata: event.metadata,
           createdAt: event.createdAt.toISOString()
@@ -176,7 +199,8 @@ export class AuditController {
       ...(query.reviewId ? [{ reviewId: query.reviewId }] : [])
     ];
 
-    const where: Prisma.AuditEventWhereInput = filters.length > 0 ? { OR: filters } : {};
+    const visibilityWhere = auditVisibilityWhere(user);
+    const baseWhere: Prisma.AuditEventWhereInput = filters.length > 0 ? { OR: filters } : {};
     const andFilters: Prisma.AuditEventWhereInput[] = [];
 
     if (query.action) andFilters.push({ action: { contains: query.action, mode: 'insensitive' } });
@@ -199,9 +223,8 @@ export class AuditController {
         ]
       });
     }
-    if (andFilters.length > 0) {
-      where.AND = andFilters;
-    }
+    const whereParts = [visibilityWhere, baseWhere, ...andFilters].filter(nonEmptyWhere);
+    const where: Prisma.AuditEventWhereInput = whereParts.length > 0 ? { AND: whereParts } : {};
 
     const [items, total] = await Promise.all([
       this.prisma.auditEvent.findMany({

@@ -3,20 +3,26 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import type { ReactNode } from 'react';
-import { BarChart3, FileText, FolderOpen, LogOut, ReceiptText } from 'lucide-react';
+import { BarChart3, ChevronDown, FolderOpen, Lightbulb, LogOut, Settings, UserCircle, WalletCards } from 'lucide-react';
+import { BalanceIcon } from './brand/BalanceIcon';
 import { useAuth } from '../context/auth-context';
 import { Button } from './ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from './ui/dropdown-menu';
 import { ThemeToggle } from './theme-toggle';
 import { cn } from '@/lib/utils';
-import { EnvironmentBadge } from './system/environment-badge';
 import { AppFooter } from './system/app-footer';
-import { useSystemStatus } from '../hooks/use-system-status';
 
 export function ConsumerLayout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
-  const { environment } = useSystemStatus();
 
   async function handleLogout() {
     await logout();
@@ -26,8 +32,9 @@ export function ConsumerLayout({ children }: { children: ReactNode }) {
   const navLinks = [
     { href: '/app', label: 'Dashboard', icon: BarChart3 },
     { href: '/app/documents', label: 'Documents', icon: FolderOpen },
-    { href: '/app/claims', label: 'Claims', icon: FileText },
-  ];
+    { href: '/app/insights', label: 'Insights', icon: Lightbulb },
+    { href: '/app/budget', label: 'Budget', icon: WalletCards },
+  ].filter((link) => user?.role === 'consumer' || (link.href !== '/app/insights' && link.href !== '/app/budget'));
 
   function isActive(href: string) {
     return pathname === href || (href !== '/app' && pathname?.startsWith(href));
@@ -39,10 +46,9 @@ export function ConsumerLayout({ children }: { children: ReactNode }) {
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 lg:px-6">
           <div className="flex min-w-0 items-center gap-5">
             <Link href="/app" className="flex items-center gap-2 text-sm font-semibold tracking-tight">
-              <ReceiptText className="size-5 text-primary" />
+              <BalanceIcon className="size-6" aria-hidden="true" />
               <span className="text-base tracking-normal">Balance</span>
             </Link>
-            <EnvironmentBadge environment={environment} />
             <nav className="hidden gap-1 md:flex">
               {navLinks.map((link) => (
                 <Button key={link.href} asChild variant="ghost" size="sm">
@@ -63,17 +69,58 @@ export function ConsumerLayout({ children }: { children: ReactNode }) {
             </nav>
           </div>
           <div className="flex items-center gap-3">
-            <span className="hidden text-xs text-muted-foreground sm:inline">{user?.displayName}</span>
             <ThemeToggle />
-            <Button type="button" variant="secondary" size="sm" onClick={handleLogout}>
-              <LogOut className="size-4" />
-              <span className="hidden sm:inline">Sign out</span>
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="h-10 gap-2 rounded-md border border-border bg-muted/55 px-3 hover:bg-muted"
+                  aria-label="Open account menu"
+                >
+                  <UserCircle className="size-4 text-muted-foreground" />
+                  <span className="max-w-28 truncate text-sm">{user?.displayName ?? 'Account'}</span>
+                  <ChevronDown className="size-3.5 text-muted-foreground" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-48">
+                <DropdownMenuLabel>{user?.displayName ?? 'Account'}</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href="/app/settings">
+                    <Settings className="size-4" />
+                    Settings
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => void handleLogout()}>
+                  <LogOut className="size-4" />
+                  Sign out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-7xl px-4 py-6 lg:px-6 flex-1 w-full">{children}</main>
+      <main className="mx-auto max-w-7xl px-4 py-6 pb-24 lg:px-6 md:pb-6 flex-1 w-full">{children}</main>
       <AppFooter />
+      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 px-2 py-2 shadow-lg backdrop-blur md:hidden" aria-label="Consumer navigation">
+        <div className="grid grid-cols-4 gap-1">
+          {navLinks.map((link) => (
+            <Link
+              key={link.href}
+              href={link.href}
+              className={cn(
+                'flex h-14 flex-col items-center justify-center gap-1 rounded-md text-[11px] font-medium text-muted-foreground',
+                isActive(link.href) && 'bg-primary/10 text-primary'
+              )}
+            >
+              <link.icon className="size-4" />
+              {link.label}
+            </Link>
+          ))}
+        </div>
+      </nav>
     </div>
   );
 }
