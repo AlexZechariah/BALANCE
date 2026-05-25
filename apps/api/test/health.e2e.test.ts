@@ -2,6 +2,7 @@ import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { loadAppConfig } from '@balance/config';
 
 import { AppController } from '../src/app.controller';
 import { ContractHttpExceptionFilter } from '../src/common/contract-http-exception.filter';
@@ -41,7 +42,7 @@ describe('Balance API status endpoints', () => {
       service: 'balance-api',
       app: 'Balance',
       environment: 'local',
-      version: '0.1.0'
+      version: loadAppConfig().appVersion
     });
   });
 
@@ -53,7 +54,7 @@ describe('Balance API status endpoints', () => {
       service: 'balance-api',
       app: 'Balance',
       environment: 'local',
-      version: '0.1.0'
+      version: loadAppConfig().appVersion
     });
   });
 
@@ -83,7 +84,7 @@ describe('Balance API status endpoints', () => {
       service: 'balance-api',
       app: 'Balance',
       environment: 'local',
-      version: '0.1.0',
+      version: loadAppConfig().appVersion,
       commit: 'local',
       build: 'local-build'
     });

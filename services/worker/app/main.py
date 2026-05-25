@@ -19,7 +19,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Balance Worker", version="0.1.0")
+VERSION = "0.4.0"
+
+app = FastAPI(title="Balance Worker", version=VERSION)
 
 _shutdown = asyncio.Event()
 _workers: list[Worker] = []

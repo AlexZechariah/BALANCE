@@ -1,5 +1,6 @@
 import type { AppConfig } from '@balance/types';
 import { buildApiBaseUrl, normalizeEnvironment, parsePort } from '@balance/utils';
+import { appVersion as defaultAppVersion } from './env.defaults.json';
 
 function firstNonEmpty(...values: Array<string | undefined>): string | undefined {
   return values.find((value) => value?.trim())?.trim();
@@ -73,7 +74,7 @@ export function loadAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     appEnv,
     projectSlug: firstNonEmpty(env.PROJECT_SLUG) || 'balance',
     deploymentNamespace: firstNonEmpty(env.DEPLOYMENT_NAMESPACE) || 'swe40006-project',
-    appVersion: env.APP_VERSION?.trim() || '0.1.0',
+    appVersion: env.APP_VERSION?.trim() || defaultAppVersion,
     gitCommit: env.GIT_COMMIT?.trim() || 'local',
     buildId: env.BUILD_ID?.trim() || 'local-build',
     webPort,

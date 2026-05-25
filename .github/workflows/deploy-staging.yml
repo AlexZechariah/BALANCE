@@ -47,6 +47,8 @@ jobs:
       SEED_ADMIN_PASSWORD: ${{ secrets.STAGING_SEED_ADMIN_PASSWORD }}
       GIT_COMMIT: ${{ github.sha }}
       BUILD_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
+      APP_VERSION: ${{ vars.APP_VERSION || '0.4.0' }}
+      GH_PAT: ${{ secrets.GH_PAT }}
       REPOSITORY_URL: https://github.com/Alex-Zechariah-02/SWE40006-Project.git
       COMPOSE_FILE: infra/compose/compose.staging.yml
       APP_ENV: staging
@@ -60,6 +62,9 @@ jobs:
         with:
           aws-region: ${{ env.SSM_REGION }}
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
+
+      - name: Read version from version.json
+        run: echo "APP_VERSION=$(node -p "require('./version.json').version")" >> $GITHUB_ENV
 
       - name: Build staging SSM request payload
         run: |
@@ -84,6 +89,8 @@ jobs:
               f"GIT_COMMIT={q(os.environ['GIT_COMMIT'])}",
               f"GITHUB_SHA={q(os.environ['GIT_COMMIT'])}",
               f"BUILD_ID={q(os.environ['BUILD_ID'])}",
+              f"APP_VERSION={q(os.environ['APP_VERSION'])}",
+              f"GH_PAT={q(os.environ['GH_PAT'])}",
               f"DATABASE_URL={q(os.environ['DATABASE_URL'])}",
               f"POSTGRES_PASSWORD={q(os.environ['POSTGRES_PASSWORD'])}",
               f"REDIS_URL={q(os.environ['REDIS_URL'])}",
@@ -102,7 +109,7 @@ jobs:
               'install -d -m 0755 "$APP_DIR"',
               'chown -R ubuntu:ubuntu "$APP_DIR"',
               'chmod 0755 "$APP_DIR"',
-              "sudo -H -u ubuntu env HOME=/home/ubuntu AWS_REGION=\"$AWS_REGION\" S3_BUCKET=\"$S3_BUCKET\" APP_DIR=\"$APP_DIR\" REPOSITORY_URL=\"$REPOSITORY_URL\" COMPOSE_FILE=\"$COMPOSE_FILE\" APP_ENV=\"$APP_ENV\" GIT_COMMIT=\"$GIT_COMMIT\" GITHUB_SHA=\"$GITHUB_SHA\" BUILD_ID=\"$BUILD_ID\" DATABASE_URL=\"$DATABASE_URL\" POSTGRES_PASSWORD=\"$POSTGRES_PASSWORD\" REDIS_URL=\"$REDIS_URL\" GRAFANA_ADMIN_PASSWORD=\"$GRAFANA_ADMIN_PASSWORD\" JWT_SECRET=\"$JWT_SECRET\" JWT_EXPIRES_IN=\"$JWT_EXPIRES_IN\" PASSWORD_PEPPER=\"$PASSWORD_PEPPER\" STORAGE_DRIVER=\"$STORAGE_DRIVER\" S3_REGION=\"$S3_REGION\" OCR_PROVIDER=\"$OCR_PROVIDER\" QUEUE_PROOF_NAME=\"$QUEUE_PROOF_NAME\" EXTRACTION_QUEUE_NAME=\"$EXTRACTION_QUEUE_NAME\" SEED_CONSUMER_PASSWORD=\"$SEED_CONSUMER_PASSWORD\" SEED_REVIEWER_PASSWORD=\"$SEED_REVIEWER_PASSWORD\" SEED_ADMIN_PASSWORD=\"$SEED_ADMIN_PASSWORD\" bash -lc 'set -euo pipefail; if [ ! -d \"$APP_DIR/.git\" ]; then git clone \"$REPOSITORY_URL\" \"$APP_DIR\"; fi; cd \"$APP_DIR\"; git remote set-url origin \"$REPOSITORY_URL\"; git fetch --prune origin develop; git checkout -B develop origin/develop; git reset --hard \"$GIT_COMMIT\"; cd \"$APP_DIR\"; bash scripts/deploy/ssm-deploy.sh'",
+              "sudo -H -u ubuntu env HOME=/home/ubuntu AWS_REGION=\"$AWS_REGION\" S3_BUCKET=\"$S3_BUCKET\" APP_DIR=\"$APP_DIR\" REPOSITORY_URL=\"$REPOSITORY_URL\" COMPOSE_FILE=\"$COMPOSE_FILE\" APP_ENV=\"$APP_ENV\" GIT_COMMIT=\"$GIT_COMMIT\" GITHUB_SHA=\"$GITHUB_SHA\" BUILD_ID=\"$BUILD_ID\" APP_VERSION=\"$APP_VERSION\" GH_PAT=\"$GH_PAT\" DATABASE_URL=\"$DATABASE_URL\" POSTGRES_PASSWORD=\"$POSTGRES_PASSWORD\" REDIS_URL=\"$REDIS_URL\" GRAFANA_ADMIN_PASSWORD=\"$GRAFANA_ADMIN_PASSWORD\" JWT_SECRET=\"$JWT_SECRET\" JWT_EXPIRES_IN=\"$JWT_EXPIRES_IN\" PASSWORD_PEPPER=\"$PASSWORD_PEPPER\" STORAGE_DRIVER=\"$STORAGE_DRIVER\" S3_REGION=\"$S3_REGION\" OCR_PROVIDER=\"$OCR_PROVIDER\" QUEUE_PROOF_NAME=\"$QUEUE_PROOF_NAME\" EXTRACTION_QUEUE_NAME=\"$EXTRACTION_QUEUE_NAME\" SEED_CONSUMER_PASSWORD=\"$SEED_CONSUMER_PASSWORD\" SEED_REVIEWER_PASSWORD=\"$SEED_REVIEWER_PASSWORD\" SEED_ADMIN_PASSWORD=\"$SEED_ADMIN_PASSWORD\" bash -lc 'set -euo pipefail; if [ ! -d \"$APP_DIR/.git\" ]; then git clone \"$REPOSITORY_URL\" \"$APP_DIR\"; fi; cd \"$APP_DIR\"; git remote set-url origin \"$REPOSITORY_URL\"; git fetch --prune origin develop; git checkout -B develop origin/develop; git reset --hard \"$GIT_COMMIT\"; cd \"$APP_DIR\"; bash scripts/deploy/ssm-deploy.sh'",
           ]
 
           request = {
