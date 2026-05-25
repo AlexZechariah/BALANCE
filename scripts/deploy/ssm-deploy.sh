@@ -141,6 +141,7 @@ export NODE_ENV="${NODE_ENV:-production}"
 export APP_VERSION="${APP_VERSION:-0.4.0}"
 export GIT_COMMIT
 export BUILD_ID
+export GH_PAT
 export WEB_PORT="${WEB_PORT:-3000}"
 export API_PORT="${API_PORT:-3001}"
 export PUBLIC_HTTP_PORT="${PUBLIC_HTTP_PORT:-80}"
