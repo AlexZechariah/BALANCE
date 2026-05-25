@@ -72,7 +72,7 @@ services:
       DEPLOYMENT_NAMESPACE: ${DEPLOYMENT_NAMESPACE:-swe40006-project}
       APP_ENV: production
       NODE_ENV: ${NODE_ENV:-production}
-      APP_VERSION: ${APP_VERSION:-0.1.0}
+      APP_VERSION: ${APP_VERSION:-0.1.1}
       GIT_COMMIT: ${GIT_COMMIT:-production}
       BUILD_ID: ${BUILD_ID:-production-build}
       API_PORT: 3001
@@ -118,7 +118,7 @@ services:
       DEPLOYMENT_NAMESPACE: ${DEPLOYMENT_NAMESPACE:-swe40006-project}
       APP_ENV: production
       NODE_ENV: ${NODE_ENV:-production}
-      APP_VERSION: ${APP_VERSION:-0.1.0}
+      APP_VERSION: ${APP_VERSION:-0.1.1}
       GIT_COMMIT: ${GIT_COMMIT:-production}
       BUILD_ID: ${BUILD_ID:-production-build}
       WEB_PORT: 3000
