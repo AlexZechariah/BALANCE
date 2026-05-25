@@ -23,6 +23,14 @@ import {
   type ActorContext
 } from '../auth/access-policy';
 
+import {
+  amountLikeToMinor,
+  effectiveDocumentAmountMinor,
+  effectiveDocumentCategory,
+  effectiveDocumentMonth,
+  fieldValue
+} from './document-spend';
+
 const ACCEPTED_CONTENT_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
 const EXTRACTION_PROVIDERS = new Set(['textract']);
 
@@ -170,19 +178,6 @@ function parseTags(value: string | null | undefined): string[] {
 
 function jsonArray(value: Prisma.JsonValue | null | undefined): unknown[] {
   return Array.isArray(value) ? value : [];
-}
-
-function fieldValue(fields: DocumentField[], name: FieldName): string | null {
-  return fields.find((field) => field.name === name)?.correctedValue ?? fields.find((field) => field.name === name)?.value ?? null;
-}
-
-function amountLikeToMinor(value: string | null | undefined): number | null {
-  if (!value) return null;
-  const cleaned = value.replace(/[^0-9.,-]/g, '').replace(/,/g, '').trim();
-  if (!cleaned) return null;
-  const parsed = Number(cleaned);
-  if (!Number.isFinite(parsed)) return null;
-  return Math.round(parsed * 100);
 }
 
 function documentFingerprint(input: {
@@ -835,9 +830,8 @@ export class DocumentsService {
     const claimDocumentIds = new Set(claims.map((claim) => claim.documentId));
 
     for (const document of documents) {
-      const amount = document.amountMinor ?? amountLikeToMinor(fieldValue(document.fields, 'total') ?? fieldValue(document.fields, 'amountMinor')) ?? 0;
-      const date = document.transactionDate ?? document.documentDate ?? document.createdAt.toISOString().slice(0, 10);
-      const docMonth = date.slice(0, 7);
+      const amount = effectiveDocumentAmountMinor(document);
+      const docMonth = effectiveDocumentMonth(document);
       const tax = amountLikeToMinor(fieldValue(document.fields, 'tax')) ?? 0;
       const service = amountLikeToMinor(fieldValue(document.fields, 'serviceCharge')) ?? 0;
       const discount = amountLikeToMinor(fieldValue(document.fields, 'discount')) ?? amountLikeToMinor(fieldValue(document.fields, 'voucher')) ?? 0;
@@ -872,7 +866,7 @@ export class DocumentsService {
       merchantEntry.count += 1;
       byMerchant.set(merchant, merchantEntry);
 
-      const category = document.category ?? 'uncategorized';
+      const category = effectiveDocumentCategory(document);
       const categoryEntry = byCategory.get(category) ?? { category, amountMinor: 0, count: 0 };
       categoryEntry.amountMinor += amount;
       categoryEntry.count += 1;
@@ -1022,9 +1016,36 @@ export class DocumentsService {
       }
     }
 
+    // Sync denormalized summary columns (merchantName, amountMinor, documentDate, currency)
+    // with the corrected field values so the Evidence Summary reflects corrections.
+    // Uses the same amount parsing logic as the extraction worker (_parse_amount_str).
+    const summaryFields = await this.prisma.documentField.findMany({
+      where: {
+        documentId: document.id,
+        name: { in: ['merchantName', 'documentDate', 'amountMinor', 'currency'] }
+      }
+    });
+    const summaryUpdate: Record<string, string | number | null> = {};
+    for (const field of summaryFields) {
+      const resolved = field.correctedValue ?? field.value;
+      if (field.name === 'amountMinor') {
+        if (resolved) {
+          const cleaned = resolved.replace(/,/g, '').trim();
+          const num = Number(cleaned);
+          summaryUpdate.amountMinor = Number.isNaN(num) ? null
+            : cleaned.includes('.') ? Math.round(num * 100)
+            : num; // integer → already in minor units
+        } else {
+          summaryUpdate.amountMinor = null;
+        }
+      } else {
+        summaryUpdate[field.name] = resolved || null;
+      }
+    }
+
     const updated = await this.prisma.document.update({
       where: { id: document.id },
-      data: { status: 'corrected' },
+      data: { status: 'corrected', ...summaryUpdate },
       include: { fields: true }
     });
 

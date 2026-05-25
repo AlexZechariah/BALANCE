@@ -8,6 +8,7 @@ import {
   BALANCE_CATEGORIES,
   CONSUMER_RECORD_TYPES,
   ENTERPRISE_CLAIM_INTENTS,
+  normalizeBalanceCategoryValue,
   type ClaimStatus,
   type DocumentStatus,
   type ReviewStatus
@@ -23,16 +24,8 @@ const optionalNullableTrimmedString = z.preprocess(
   z.string().trim().nullable().optional()
 );
 
-const normalizeCategoryInput = (value: unknown) => {
-  if (typeof value !== 'string') {
-    return value;
-  }
-
-  return value.trim().toLowerCase().replace(/[\s-]+/g, '_');
-};
-
 const categorySchema = z.preprocess(
-  normalizeCategoryInput,
+  normalizeBalanceCategoryValue,
   z.enum(BALANCE_CATEGORIES, { message: 'Category is required' })
 );
 
@@ -41,8 +34,10 @@ const optionalNullableCategorySchema = z.preprocess((value) => {
     return null;
   }
 
-  return normalizeCategoryInput(value);
+  return normalizeBalanceCategoryValue(value);
 }, z.enum(BALANCE_CATEGORIES).nullable().optional());
+
+const monthKeySchema = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Month must use YYYY-MM format');
 
 const passwordSchema = z
   .string()
@@ -106,7 +101,7 @@ export const documentMetadataPatchSchema = z.object({
   label: z.string().trim().min(1, 'Label is required').max(120, 'Label must not exceed 120 characters').nullable().optional(),
   notes: optionalNullableTrimmedString,
   category: optionalNullableCategorySchema,
-  documentType: z.enum(CONSUMER_RECORD_TYPES).nullable().optional(),
+  documentType: z.enum([...CONSUMER_RECORD_TYPES, 'invoice', 'receipt', 'receipt_pdf']).nullable().optional(),
   tags: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
   retentionUntil: z.string().datetime().nullable().optional()
 });
@@ -169,6 +164,7 @@ export const accountUpdateRequestSchema = z.object({
 export const budgetCreateRequestSchema = z.object({
   category: categorySchema,
   amountMinor: z.coerce.number().int().min(0, 'Budget amount must be zero or greater').max(100_000_000, 'Budget amount is too large'),
+  month: monthKeySchema.optional(),
   currency: z.string().trim().length(3).optional()
 });
 

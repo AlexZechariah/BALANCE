@@ -256,7 +256,7 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
         await updateDocumentMetadata(doc.id, {
           label: metadata.label.trim(),
           category: metadata.category,
-          documentType: isConsumerView ? metadata.documentType : doc.documentType ?? null,
+          ...(isConsumerView ? { documentType: metadata.documentType } : {}),
           notes: metadata.notes.trim() || null,
           tags: splitTags(metadata.tags),
         });

@@ -627,14 +627,15 @@ describe.sequential('Balance API backend workflow', () => {
         expect(response.body.extractionJob.provider).toBe('textract');
       });
 
+    // The extraction worker runs asynchronously and picks up BullMQ jobs
+    // immediately. We do NOT re-query the extraction job status here because
+    // the worker may have already transitioned it from queued → processing,
+    // creating a race condition. The API response above (line 625-627) already
+    // proved the job was created with status='queued' and provider='textract'.
+    // The document status check below is safe because the worker does not
+    // change the document status until extraction fully completes.
     const updatedDoc = await ctx.prisma.document.findUniqueOrThrow({ where: { id: retryable.id } });
     expect(updatedDoc.status).toBe('queued');
-
-    const latestJob = await ctx.prisma.extractionJob.findFirst({
-      where: { documentId: retryable.id },
-      orderBy: { createdAt: 'desc' }
-    });
-    expect(latestJob?.status).toBe('queued');
 
     for (const status of ['queued', 'processing'] as const) {
       const blocked = await createDocument(ctx.prisma, {
@@ -699,6 +700,42 @@ describe.sequential('Balance API backend workflow', () => {
       deletedDocumentId: deleteTarget.id,
       originalFilename: deleteTarget.originalFilename
     });
+  });
+
+  it('proves metadata patch accepts all system documentType values including invoice/receipt/receipt_pdf', async () => {
+    const consumer = await login(ctx.app, 'consumer');
+
+    // All values the worker and inferDocumentType can set, plus consumer record types
+    const documentTypes = ['invoice', 'receipt', 'receipt_pdf', 'tax', 'warranty', 'return', 'personal', 'reimbursement'] as const;
+
+    for (const documentType of documentTypes) {
+      const doc = await createDocument(ctx.prisma, {
+        ownerId: consumer.user.id,
+        status: 'extracted',
+        documentType,
+      });
+
+      const response = await request(ctx.app.getHttpServer())
+        .patch(`/documents/${doc.id}/metadata`)
+        .set('Authorization', auth(consumer.token))
+        .send({ category: 'other', documentType })
+        .expect(200);
+
+      expect(response.body.document.documentType).toBe(documentType);
+    }
+
+    // Also verify that omitting documentType (undefined) works — this is the enterprise view path
+    const nullDoc = await createDocument(ctx.prisma, {
+      ownerId: consumer.user.id,
+      status: 'extracted',
+      documentType: 'invoice',
+    });
+
+    await request(ctx.app.getHttpServer())
+      .patch(`/documents/${nullDoc.id}/metadata`)
+      .set('Authorization', auth(consumer.token))
+      .send({ category: 'other' })
+      .expect(200);
   });
 
   it('proves consumer document and claim insights use the dashboard contract', async () => {
@@ -828,12 +865,13 @@ describe.sequential('Balance API backend workflow', () => {
       });
   });
 
-  it('proves consumer budgets are current-month, user-owned, and spend-backed', async () => {
+  it('proves consumer budgets are month-scoped, canonical-category, user-owned, and spend-backed', async () => {
     const consumer = await login(ctx.app, 'consumer');
     const staff = await login(ctx.app, 'staff');
     const suffix = Date.now().toString(36);
-    const now = new Date();
-    const currentDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-18`;
+    const budgetMonth = '2026-05';
+    const currentDate = `${budgetMonth}-18`;
+    const previousDate = '2026-04-18';
 
     const otherConsumer = await request(ctx.app.getHttpServer())
       .post('/auth/register')
@@ -844,6 +882,25 @@ describe.sequential('Balance API backend workflow', () => {
       })
       .expect(201);
 
+    const editedCategoryDocument = await createDocument(ctx.prisma, {
+      ownerId: consumer.user.id,
+      status: 'extracted',
+      transactionDate: currentDate,
+      documentDate: currentDate,
+      amountMinor: 1450,
+      currency: 'MYR',
+      category: 'other'
+    });
+
+    await request(ctx.app.getHttpServer())
+      .patch(`/documents/${editedCategoryDocument.id}/metadata`)
+      .set('Authorization', auth(consumer.token))
+      .send({ category: 'Restaurant' })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.document.category).toBe('restaurant');
+      });
+
     await createDocument(ctx.prisma, {
       ownerId: consumer.user.id,
       status: 'extracted',
@@ -851,7 +908,7 @@ describe.sequential('Balance API backend workflow', () => {
       documentDate: currentDate,
       amountMinor: 4000,
       currency: 'MYR',
-      category: 'grocery'
+      category: 'Restaurant'
     });
 
     await createDocument(ctx.prisma, {
@@ -861,7 +918,65 @@ describe.sequential('Balance API backend workflow', () => {
       documentDate: currentDate,
       amountMinor: 2000,
       currency: 'MYR',
+      category: ' restaurant '
+    });
+
+    const fallbackAmountDocument = await createDocument(ctx.prisma, {
+      ownerId: consumer.user.id,
+      status: 'extracted',
+      transactionDate: currentDate,
+      documentDate: currentDate,
+      amountMinor: null,
+      currency: 'MYR',
+      category: 'RESTaurant'
+    });
+    await ctx.prisma.documentField.create({
+      data: {
+        documentId: fallbackAmountDocument.id,
+        name: 'total',
+        value: 'RM 15.50',
+        source: 'ocr'
+      }
+    });
+
+    await createDocument(ctx.prisma, {
+      ownerId: consumer.user.id,
+      status: 'extracted',
+      transactionDate: previousDate,
+      documentDate: previousDate,
+      amountMinor: 9000,
+      currency: 'MYR',
+      category: 'restaurant'
+    });
+
+    await createDocument(ctx.prisma, {
+      ownerId: consumer.user.id,
+      status: 'extracted',
+      transactionDate: currentDate,
+      documentDate: currentDate,
+      amountMinor: 1200,
+      currency: 'MYR',
       category: 'grocery'
+    });
+
+    await createDocument(ctx.prisma, {
+      ownerId: consumer.user.id,
+      status: 'extracted',
+      transactionDate: currentDate,
+      documentDate: currentDate,
+      amountMinor: 700,
+      currency: 'MYR',
+      category: null
+    });
+
+    await createDocument(ctx.prisma, {
+      ownerId: consumer.user.id,
+      status: 'extracted',
+      transactionDate: currentDate,
+      documentDate: currentDate,
+      amountMinor: 500,
+      currency: 'MYR',
+      category: 'Food And Beverage'
     });
 
     await request(ctx.app.getHttpServer())
@@ -872,33 +987,76 @@ describe.sequential('Balance API backend workflow', () => {
     const created = await request(ctx.app.getHttpServer())
       .post('/budgets')
       .set('Authorization', auth(consumer.token))
-      .send({ category: 'Grocery', amountMinor: 7000, currency: 'MYR' })
+      .send({ category: 'Restaurant', amountMinor: 10000, month: budgetMonth, currency: 'MYR' })
       .expect(201);
 
     expect(created.body.budget).toMatchObject({
       userId: consumer.user.id,
-      category: 'grocery',
-      amountMinor: 7000,
-      actualMinor: 6000,
+      category: 'restaurant',
+      month: budgetMonth,
+      amountMinor: 10000,
+      actualMinor: 9000,
       remainingMinor: 1000,
-      documentCount: 2,
+      documentCount: 4,
       isOverBudget: false
+    });
+
+    const softwareBudget = await request(ctx.app.getHttpServer())
+      .post('/budgets')
+      .set('Authorization', auth(consumer.token))
+      .send({ category: 'software', amountMinor: 3000, month: budgetMonth })
+      .expect(201);
+    expect(softwareBudget.body.budget).toMatchObject({
+      category: 'software',
+      actualMinor: 0,
+      documentCount: 0,
+      remainingMinor: 3000
+    });
+
+    await createDocument(ctx.prisma, {
+      ownerId: consumer.user.id,
+      status: 'extracted',
+      transactionDate: currentDate,
+      documentDate: currentDate,
+      amountMinor: 2500,
+      currency: 'MYR',
+      category: 'software'
     });
 
     await request(ctx.app.getHttpServer())
       .post('/budgets')
       .set('Authorization', auth(consumer.token))
-      .send({ category: 'grocery', amountMinor: 8000 })
+      .send({ category: 'RESTAURANT', amountMinor: 8000, month: budgetMonth })
       .expect(409);
 
     await request(ctx.app.getHttpServer())
-      .get('/budgets')
+      .get(`/budgets?month=${budgetMonth}`)
       .set('Authorization', auth(consumer.token))
       .expect(200)
       .expect((response) => {
-        expect(response.body.month).toBe(currentDate.slice(0, 7));
-        expect(response.body.budgets).toHaveLength(1);
-        expect(response.body.budgets[0].actualMinor).toBe(6000);
+        expect(response.body.month).toBe(budgetMonth);
+        expect(response.body.budgets).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ category: 'restaurant', actualMinor: 9000, documentCount: 4 }),
+            expect.objectContaining({ category: 'software', actualMinor: 2500, documentCount: 1 })
+          ])
+        );
+        expect(response.body.unbudgetedCategories).toEqual([
+          expect.objectContaining({ category: 'grocery', amountMinor: 1200, count: 1 }),
+          expect.objectContaining({ category: 'uncategorized', amountMinor: 700, count: 1 }),
+          expect.objectContaining({ category: 'other', amountMinor: 500, count: 1 })
+        ]);
+      });
+
+    await request(ctx.app.getHttpServer())
+      .get('/budgets?month=2026-04')
+      .set('Authorization', auth(consumer.token))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.budgets).toHaveLength(0);
+        expect(response.body.unbudgetedCategories).toEqual([
+          expect.objectContaining({ category: 'restaurant', amountMinor: 9000, count: 1 })
+        ]);
       });
 
     await request(ctx.app.getHttpServer())
@@ -910,12 +1068,12 @@ describe.sequential('Balance API backend workflow', () => {
     await request(ctx.app.getHttpServer())
       .patch(`/budgets/${created.body.budget.id}`)
       .set('Authorization', auth(consumer.token))
-      .send({ amountMinor: 5000 })
+      .send({ amountMinor: 8000 })
       .expect(200)
       .expect((response) => {
         expect(response.body.budget).toMatchObject({
-          amountMinor: 5000,
-          actualMinor: 6000,
+          amountMinor: 8000,
+          actualMinor: 9000,
           remainingMinor: -1000,
           isOverBudget: true
         });
@@ -932,18 +1090,24 @@ describe.sequential('Balance API backend workflow', () => {
       .expect(200);
 
     await request(ctx.app.getHttpServer())
-      .get('/budgets')
+      .get(`/budgets?month=${budgetMonth}`)
       .set('Authorization', auth(consumer.token))
       .expect(200)
       .expect((response) => {
-        expect(response.body.budgets).toHaveLength(0);
+        expect(response.body.budgets).toHaveLength(1);
+        expect(response.body.budgets[0]).toMatchObject({ category: 'software', actualMinor: 2500 });
+        expect(response.body.unbudgetedCategories).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ category: 'restaurant', amountMinor: 9000, count: 4 })
+          ])
+        );
       });
 
     const budgetActions = await ctx.prisma.auditEvent.findMany({
       where: { entityType: 'budget', actorId: consumer.user.id },
       orderBy: { createdAt: 'asc' }
     });
-    expect(budgetActions.map((event) => event.action)).toEqual(['budget.created', 'budget.updated', 'budget.deleted']);
+    expect(budgetActions.map((event) => event.action)).toEqual(['budget.created', 'budget.created', 'budget.updated', 'budget.deleted']);
   });
 
   it('proves claim, review, explicit claim transition, decision, and audit behavior', async () => {

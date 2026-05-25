@@ -47,6 +47,29 @@ export const BALANCE_CATEGORIES = [
 ] as const;
 export type BalanceCategory = (typeof BALANCE_CATEGORIES)[number];
 
+const BALANCE_CATEGORY_SET = new Set<string>(BALANCE_CATEGORIES);
+
+export function normalizeBalanceCategoryValue(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return normalized.length > 0 ? normalized : null;
+}
+
+export function isBalanceCategory(value: unknown): value is BalanceCategory {
+  return typeof value === 'string' && BALANCE_CATEGORY_SET.has(value);
+}
+
+export function canonicalizeBalanceCategory(value: unknown): BalanceCategory | null {
+  const normalized = normalizeBalanceCategoryValue(value);
+  return isBalanceCategory(normalized) ? normalized : null;
+}
+
+export function canonicalizeBalanceCategoryOrOther(value: unknown): BalanceCategory | null {
+  const normalized = normalizeBalanceCategoryValue(value);
+  if (!normalized) return null;
+  return isBalanceCategory(normalized) ? normalized : 'other';
+}
+
 export const CONSUMER_RECORD_TYPES = ['tax', 'warranty', 'return', 'personal', 'reimbursement'] as const;
 export type ConsumerRecordType = (typeof CONSUMER_RECORD_TYPES)[number];
 
@@ -170,6 +193,12 @@ export interface BudgetSummary {
   isOverBudget: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface BudgetCategorySpendSummary {
+  category: string;
+  amountMinor: number;
+  count: number;
 }
 
 export interface AppConfig {

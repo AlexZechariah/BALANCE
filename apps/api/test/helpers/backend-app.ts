@@ -184,11 +184,11 @@ export async function createDocument(
       label: input.label ?? null,
       notes: input.notes ?? null,
       merchantName: input.merchantName ?? 'Demo Merchant',
-      documentDate: input.documentDate ?? '2026-05-16',
-      transactionDate: input.transactionDate ?? input.documentDate ?? '2026-05-16',
-      amountMinor: input.amountMinor ?? 1299,
-      currency: input.currency ?? 'AUD',
-      category: input.category ?? null,
+      documentDate: input.documentDate === undefined ? '2026-05-16' : input.documentDate,
+      transactionDate: input.transactionDate === undefined ? (input.documentDate ?? '2026-05-16') : input.transactionDate,
+      amountMinor: input.amountMinor === undefined ? 1299 : input.amountMinor,
+      currency: input.currency === undefined ? 'AUD' : input.currency,
+      category: input.category === undefined ? null : input.category,
       documentType: input.documentType ?? null
     }
   });

@@ -96,7 +96,7 @@ services:
       DEPLOYMENT_NAMESPACE: ${DEPLOYMENT_NAMESPACE:-swe40006-project}
       APP_ENV: local
       NODE_ENV: ${NODE_ENV:-development}
-      APP_VERSION: ${APP_VERSION:-0.4.0}
+      APP_VERSION: ${APP_VERSION:-0.4.1}
       GIT_COMMIT: ${GIT_COMMIT:-local}
       BUILD_ID: ${BUILD_ID:-local-build}
       API_PORT: 3001

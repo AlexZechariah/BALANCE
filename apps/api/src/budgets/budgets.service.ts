@@ -1,8 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { Prisma } from '@balance/db';
+import { canonicalizeBalanceCategory, type BudgetCategorySpendSummary } from '@balance/types';
 
 import { AuditService } from '../audit/audit.service';
 import { throwContractHttpError, throwValidationError } from '../common/contract-errors';
+import { effectiveDocumentAmountMinor, effectiveDocumentCategory, effectiveDocumentMonth } from '../documents/document-spend';
 import { PrismaService } from '../prisma/prisma.service';
 
 function currentMonthKey(now = new Date()): string {
@@ -17,8 +19,8 @@ function normalizeMonthKey(month?: string): string {
   return month;
 }
 
-function normalizeCategory(value: string): string {
-  return value.trim().toLowerCase();
+function normalizeBudgetCategory(value: string): string {
+  return canonicalizeBalanceCategory(value) ?? 'other';
 }
 
 function isPrismaKnownErrorCode(error: unknown, code: string): boolean {
@@ -41,14 +43,12 @@ export class BudgetsService {
     @Inject(AuditService) private readonly audit: AuditService
   ) {}
 
-  private async budgetActuals(userId: string, month: string, categories: string[]) {
-    if (categories.length === 0) return new Map<string, { actualMinor: number; documentCount: number }>();
+  private async monthCategorySpend(userId: string, month: string) {
     const { start, end } = monthDateRange(month);
 
     const documents = await this.prisma.document.findMany({
       where: {
         ownerId: userId,
-        category: { in: categories },
         OR: [
           { transactionDate: { startsWith: month } },
           { documentDate: { startsWith: month } },
@@ -61,21 +61,49 @@ export class BudgetsService {
           }
         ]
       },
-      select: { category: true, amountMinor: true }
+      select: {
+        category: true,
+        amountMinor: true,
+        transactionDate: true,
+        documentDate: true,
+        createdAt: true,
+        fields: {
+          select: {
+            name: true,
+            value: true,
+            correctedValue: true
+          }
+        }
+      }
     });
 
     const byCategory = new Map<string, { actualMinor: number; documentCount: number }>();
     for (const document of documents) {
-      const category = normalizeCategory(document.category ?? 'uncategorized');
+      if (effectiveDocumentMonth(document) !== month) continue;
+      const category = effectiveDocumentCategory(document);
       const entry = byCategory.get(category) ?? { actualMinor: 0, documentCount: 0 };
-      entry.actualMinor += document.amountMinor ?? 0;
+      entry.actualMinor += effectiveDocumentAmountMinor(document);
       entry.documentCount += 1;
       byCategory.set(category, entry);
     }
     return byCategory;
   }
 
-  private async mapBudgets(userId: string, budgets: Array<{
+  private async rejectCanonicalDuplicate(input: { userId: string; month: string; category: string; exceptId?: string }) {
+    const budgets = await this.prisma.budget.findMany({
+      where: {
+        userId: input.userId,
+        month: input.month,
+        ...(input.exceptId ? { id: { not: input.exceptId } } : {})
+      },
+      select: { category: true }
+    });
+    if (budgets.some((budget) => normalizeBudgetCategory(budget.category) === input.category)) {
+      throwContractHttpError(409, 'CONFLICT', 'A budget already exists for this category this month', []);
+    }
+  }
+
+  private async mapBudgets(userId: string, month: string, budgets: Array<{
     id: string;
     userId: string;
     category: string;
@@ -84,14 +112,15 @@ export class BudgetsService {
     currency: string;
     createdAt: Date;
     updatedAt: Date;
-  }>) {
-    const actuals = await this.budgetActuals(userId, budgets[0]?.month ?? currentMonthKey(), budgets.map((budget) => budget.category));
+  }>, categorySpend?: Map<string, { actualMinor: number; documentCount: number }>) {
+    const actuals = categorySpend ?? await this.monthCategorySpend(userId, month);
     return budgets.map((budget) => {
-      const actual = actuals.get(budget.category) ?? { actualMinor: 0, documentCount: 0 };
+      const category = normalizeBudgetCategory(budget.category);
+      const actual = actuals.get(category) ?? { actualMinor: 0, documentCount: 0 };
       return {
         id: budget.id,
         userId: budget.userId,
-        category: budget.category,
+        category,
         month: budget.month,
         amountMinor: budget.amountMinor,
         actualMinor: actual.actualMinor,
@@ -111,16 +140,28 @@ export class BudgetsService {
       where: { userId, month },
       orderBy: { category: 'asc' }
     });
+    const categorySpend = await this.monthCategorySpend(userId, month);
+    const budgetedCategories = new Set(budgets.map((budget) => normalizeBudgetCategory(budget.category)));
+    const unbudgetedCategories: BudgetCategorySpendSummary[] = Array.from(categorySpend.entries())
+      .filter(([category, spend]) => spend.actualMinor > 0 && !budgetedCategories.has(category))
+      .map(([category, spend]) => ({
+        category,
+        amountMinor: spend.actualMinor,
+        count: spend.documentCount
+      }))
+      .sort((a, b) => b.amountMinor - a.amountMinor || a.category.localeCompare(b.category));
 
     return {
       month,
-      budgets: await this.mapBudgets(userId, budgets)
+      budgets: await this.mapBudgets(userId, month, budgets, categorySpend),
+      unbudgetedCategories
     };
   }
 
-  async create(userId: string, input: { category: string; amountMinor: number; currency?: string | undefined }) {
-    const month = currentMonthKey();
-    const category = normalizeCategory(input.category);
+  async create(userId: string, input: { category: string; amountMinor: number; month?: string | undefined; currency?: string | undefined }) {
+    const month = normalizeMonthKey(input.month);
+    const category = normalizeBudgetCategory(input.category);
+    await this.rejectCanonicalDuplicate({ userId, month, category });
     const budget = await this.prisma.budget.create({
       data: {
         userId,
@@ -145,20 +186,22 @@ export class BudgetsService {
       metadata: { category: budget.category, month: budget.month, amountMinor: budget.amountMinor } satisfies Prisma.InputJsonValue
     });
 
-    const [mapped] = await this.mapBudgets(userId, [budget]);
+    const [mapped] = await this.mapBudgets(userId, month, [budget]);
     return { budget: mapped };
   }
 
   async update(userId: string, id: string, input: { category?: string | undefined; amountMinor?: number | undefined; currency?: string | undefined }) {
     const existing = await this.prisma.budget.findUnique({ where: { id } });
-    if (!existing || existing.userId !== userId || existing.month !== currentMonthKey()) {
+    if (!existing || existing.userId !== userId) {
       throwContractHttpError(404, 'NOT_FOUND', 'Budget not found', []);
     }
+    const category = input.category !== undefined ? normalizeBudgetCategory(input.category) : normalizeBudgetCategory(existing.category);
+    await this.rejectCanonicalDuplicate({ userId, month: existing.month, category, exceptId: existing.id });
 
     const budget = await this.prisma.budget.update({
       where: { id },
       data: {
-        ...(input.category !== undefined ? { category: normalizeCategory(input.category) } : {}),
+        category,
         ...(input.amountMinor !== undefined ? { amountMinor: input.amountMinor } : {}),
         ...(input.currency !== undefined ? { currency: input.currency.toUpperCase() } : {})
       }
@@ -178,13 +221,13 @@ export class BudgetsService {
       metadata: { category: budget.category, month: budget.month, amountMinor: budget.amountMinor } satisfies Prisma.InputJsonValue
     });
 
-    const [mapped] = await this.mapBudgets(userId, [budget]);
+    const [mapped] = await this.mapBudgets(userId, budget.month, [budget]);
     return { budget: mapped };
   }
 
   async delete(userId: string, id: string) {
     const budget = await this.prisma.budget.findUnique({ where: { id } });
-    if (!budget || budget.userId !== userId || budget.month !== currentMonthKey()) {
+    if (!budget || budget.userId !== userId) {
       throwContractHttpError(404, 'NOT_FOUND', 'Budget not found', []);
     }
 
