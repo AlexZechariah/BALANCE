@@ -49,6 +49,7 @@ yarn-error.log*
 *.rar
 
 *.tmp
+apps/api/tmp/
 
 # Python caches (worker)
 __pycache__/

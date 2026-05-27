@@ -307,7 +307,7 @@ export function DocumentUploadForm({ mode }: { mode: UploadMode }) {
                 <p className="truncate font-medium">{file.name}</p>
                 <p className="text-muted-foreground">{(file.size / 1024).toFixed(0)} KB · {file.type === 'application/pdf' ? 'PDF' : 'Image'}</p>
               </div>
-              <Alert variant="info">AWS Textract analyzes the selected file after upload when extraction is configured.</Alert>
+              <Alert variant="info">Open-source OCR analyzes the selected file after upload when extraction is configured.</Alert>
             </div>
           )}
         </CardContent>

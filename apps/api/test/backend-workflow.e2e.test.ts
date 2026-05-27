@@ -544,7 +544,7 @@ describe.sequential('Balance API backend workflow', () => {
     expect(upload.body.extractionJob).toMatchObject({
       documentId: upload.body.document.id,
       status: 'queued',
-      provider: 'textract'
+      provider: 'paddleocr'
     });
 
     const queuedJob = await ctx.prisma.extractionJob.findFirst({
@@ -624,14 +624,14 @@ describe.sequential('Balance API backend workflow', () => {
         expect(response.body.document.id).toBe(retryable.id);
         expect(response.body.document.status).toBe('queued');
         expect(response.body.extractionJob.status).toBe('queued');
-        expect(response.body.extractionJob.provider).toBe('textract');
+        expect(response.body.extractionJob.provider).toBe('paddleocr');
       });
 
     // The extraction worker runs asynchronously and picks up BullMQ jobs
     // immediately. We do NOT re-query the extraction job status here because
     // the worker may have already transitioned it from queued → processing,
     // creating a race condition. The API response above (line 625-627) already
-    // proved the job was created with status='queued' and provider='textract'.
+    // proved the job was created with status='queued' and provider='paddleocr'.
     // The document status check below is safe because the worker does not
     // change the document status until extraction fully completes.
     const updatedDoc = await ctx.prisma.document.findUniqueOrThrow({ where: { id: retryable.id } });

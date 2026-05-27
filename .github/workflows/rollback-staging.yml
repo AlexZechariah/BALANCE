@@ -17,7 +17,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    if: ${{ github.ref == 'refs/heads/develop' }}
+    if: ${{ github.ref == 'refs/heads/develop' && vars.ENABLE_LEGACY_AWS_DEPLOY == 'true' }}
     runs-on: ubuntu-24.04
     environment: staging
 
@@ -29,7 +29,7 @@ jobs:
       S3_BUCKET: ${{ vars.S3_BUCKET }}
       SSM_EXECUTION_TIMEOUT_SECONDS: '3600'
       SSM_STATUS_POLL_SECONDS: '10'
-      APP_DIR: /opt/swe40006-project
+      APP_DIR: /opt/balance
       APP_URL: ${{ secrets.STAGING_APP_URL }}
       API_URL: ${{ secrets.STAGING_API_URL }}
       DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
@@ -41,15 +41,15 @@ jobs:
       PASSWORD_PEPPER: ${{ secrets.STAGING_PASSWORD_PEPPER }}
       STORAGE_DRIVER: s3
       S3_REGION: ${{ vars.S3_REGION || vars.AWS_REGION }}
-      OCR_PROVIDER: textract
+      OCR_PROVIDER: paddleocr
       QUEUE_PROOF_NAME: ${{ vars.QUEUE_PROOF_NAME || 'queue_proof' }}
       EXTRACTION_QUEUE_NAME: ${{ vars.EXTRACTION_QUEUE_NAME || 'document_extract' }}
       SEED_CONSUMER_PASSWORD: ${{ secrets.STAGING_SEED_CONSUMER_PASSWORD }}
       SEED_REVIEWER_PASSWORD: ${{ secrets.STAGING_SEED_REVIEWER_PASSWORD }}
       SEED_ADMIN_PASSWORD: ${{ secrets.STAGING_SEED_ADMIN_PASSWORD }}
       BUILD_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
-      APP_VERSION: ${{ vars.APP_VERSION || '0.4.1' }}
-      REPOSITORY_URL: https://github.com/Alex-Zechariah-02/SWE40006-Project.git
+      APP_VERSION: ${{ vars.APP_VERSION || '0.5.0' }}
+      REPOSITORY_URL: https://github.com/AlexZechariah/BALANCE.git
       COMPOSE_FILE: infra/compose/compose.staging.yml
       APP_ENV: staging
       TARGET_REVISION: ${{ inputs.target_revision }}

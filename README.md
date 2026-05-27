@@ -99,12 +99,13 @@ Balance is currently structured as a pnpm monorepo:
 
 Use Node `24.15.0` and pnpm `10.33.1`.
 
-Two supported local workflows exist:
+For normal local startup, run the user-facing helper from the repository root:
 
-- Host dev (recommended): run `apps/web` and `apps/api` on your machine via `pnpm dev`, with PostgreSQL + Redis running in Docker and published on `localhost`.
-- All-in-Docker: run the full stack via `docker compose up` so containers can reach each other using Compose service names such as `postgres` and `redis`.
+```powershell
+powershell -ExecutionPolicy Bypass -File .\dev.ps1
+```
 
-If you run the API on your host, `REDIS_URL` and `DATABASE_URL` must use `localhost` (not `redis` / `postgres`), because those hostnames only resolve inside the Compose network.
+`dev.ps1` preserves persistent local data, prepares Prisma, and starts the full local Docker Compose stack. It is a convenience startup command, not a replacement for running validation commands individually.
 
 Note: if you already have a local PostgreSQL service using port `5432`, the Docker Compose local stack publishes PostgreSQL on `localhost:5433` instead.
 
@@ -117,7 +118,6 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
-pnpm dev
 ```
 
 Backend document and review workflow tests require PostgreSQL and Redis. Use Docker Compose for the local services, then run Prisma migrations and seed either from an API container or from a shell with a reachable `DATABASE_URL`.

@@ -53,7 +53,7 @@ PY
 }
 
 echo ""
-echo "=== Level 2 Monitoring Verification ==="
+echo "=== Balance Monitoring Verification ==="
 echo ""
 
 echo "-- Host exporter --"
@@ -84,5 +84,5 @@ if [ "$FAIL" -gt 0 ]; then
   echo "One or more checks failed. Review the output above."
   exit 1
 else
-  echo "All checks passed. Level 2 monitoring stack is healthy."
+  echo "All checks passed. Balance monitoring stack is healthy."
 fi

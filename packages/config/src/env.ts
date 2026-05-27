@@ -21,22 +21,13 @@ function normalizeUrl(value: string | undefined, fallback: string): string {
   return (value?.trim() || fallback).replace(/\/+$/, '');
 }
 
-function isAwsDeploymentEnv(appEnv: string): boolean {
-  return appEnv === 'staging' || appEnv === 'production';
-}
-
-function requireAwsValue(name: string, value: string, appEnv: string): string {
-  if (isAwsDeploymentEnv(appEnv) && !value) {
-    throw new Error(`${name} is required in ${appEnv}`);
-  }
-  return value;
-}
-
-function parseStorageDriver(value: string | undefined, appEnv: string): 'filesystem' | 's3' {
+function parseStorageDriver(value: string | undefined): 'filesystem' | 's3' | 's3Compatible' {
   const normalized = value?.trim().toLowerCase();
-  if (normalized === 's3') return 's3';
-  if (isAwsDeploymentEnv(appEnv)) {
-    throw new Error(`STORAGE_DRIVER must be s3 in ${appEnv}`);
+  if (normalized === 's3compatible' || normalized === 's3_compatible') {
+    return 's3Compatible';
+  }
+  if (normalized === 's3' || normalized === 'legacy_s3') {
+    return 's3';
   }
   return 'filesystem';
 }
@@ -49,16 +40,9 @@ export function loadAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const apiProxyTarget = buildApiBaseUrl(env.API_PROXY_TARGET, apiPort);
   const appName = firstNonEmpty(env.PRODUCT_NAME, env.APP_NAME) || 'Balance';
   const appEnv = normalizeEnvironment(firstNonEmpty(env.APP_ENV, env.NODE_ENV));
-  const awsRegion = firstNonEmpty(env.AWS_REGION) || '';
-  const storageDriver = parseStorageDriver(env.STORAGE_DRIVER, appEnv);
-  const s3Bucket = requireAwsValue('S3_BUCKET', firstNonEmpty(env.S3_BUCKET) || '', appEnv);
-  const s3Region = requireAwsValue('S3_REGION', firstNonEmpty(env.S3_REGION) || '', appEnv);
-  if (isAwsDeploymentEnv(appEnv)) {
-    requireAwsValue('AWS_REGION', awsRegion, appEnv);
-    if (s3Region !== awsRegion) {
-      throw new Error(`S3_REGION must match AWS_REGION in ${appEnv}`);
-    }
-  }
+  const storageDriver = parseStorageDriver(firstNonEmpty(env.STORAGE_DRIVER, env.OBJECT_STORAGE_PROVIDER));
+  const s3Bucket = firstNonEmpty(env.S3_BUCKET, env.OBJECT_STORAGE_BUCKET) || '';
+  const s3Region = firstNonEmpty(env.S3_REGION, env.OBJECT_STORAGE_REGION) || '';
   const apiBasePath = normalizePath(firstNonEmpty(env.API_BASE_PATH, env.NEXT_PUBLIC_API_BASE_PATH), '/api');
   const apiHealthPath = normalizePath(
     firstNonEmpty(env.API_HEALTH_PATH, env.NEXT_PUBLIC_API_HEALTH_PATH),
@@ -73,7 +57,7 @@ export function loadAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     appName,
     appEnv,
     projectSlug: firstNonEmpty(env.PROJECT_SLUG) || 'balance',
-    deploymentNamespace: firstNonEmpty(env.DEPLOYMENT_NAMESPACE) || 'swe40006-project',
+    deploymentNamespace: firstNonEmpty(env.DEPLOYMENT_NAMESPACE) || 'balance',
     appVersion: env.APP_VERSION?.trim() || defaultAppVersion,
     gitCommit: env.GIT_COMMIT?.trim() || 'local',
     buildId: env.BUILD_ID?.trim() || 'local-build',

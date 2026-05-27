@@ -10,7 +10,7 @@ export async function GET() {
   }
 
   const res = await fetch(
-    'https://api.github.com/repos/Alex-Zechariah-02/SWE40006-Project/commits?per_page=20&sha=main',
+    'https://api.github.com/repos/AlexZechariah/BALANCE/commits?per_page=20&sha=main',
     {
       headers: {
         Authorization: `Bearer ${token}`,

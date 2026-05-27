@@ -4,6 +4,7 @@ import { AppController } from './app.controller';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { StorageModule } from './storage/storage.module';
+import { ExtractionModule } from './extraction/extraction.module';
 import { QueueModule } from './queue/queue.module';
 import { AuditModule } from './audit/audit.module';
 import { DocumentsModule } from './documents/documents.module';
@@ -13,7 +14,19 @@ import { EnterpriseModule } from './enterprise/enterprise.module';
 import { BudgetsModule } from './budgets/budgets.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, StorageModule, QueueModule, AuditModule, DocumentsModule, ClaimsModule, ReviewsModule, EnterpriseModule, BudgetsModule],
+  imports: [
+    PrismaModule,
+    AuthModule,
+    StorageModule,
+    QueueModule,
+    AuditModule,
+    ExtractionModule,
+    DocumentsModule,
+    ClaimsModule,
+    ReviewsModule,
+    EnterpriseModule,
+    BudgetsModule
+  ],
   controllers: [AppController]
 })
 export class AppModule {}

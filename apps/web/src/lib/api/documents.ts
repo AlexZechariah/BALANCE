@@ -1,4 +1,4 @@
-import type { DocumentStatus, ExtractionJobStatus } from '@balance/types';
+import type { DocumentStatus, ExtractionJobStatus, ExtractionProvider } from '@balance/types';
 import { apiRequest, apiUpload } from './client';
 
 export interface DocumentField {
@@ -26,6 +26,8 @@ export interface ExtractionJob {
   documentId?: string;
   status: ExtractionJobStatus;
   provider: string;
+  warningCodes?: string[];
+  confidenceSummary?: Record<string, unknown>;
   errorMessage: string | null;
   createdAt: string;
   startedAt: string | null;
@@ -65,7 +67,17 @@ export interface DocumentSummary {
 
 export interface DocumentDetail extends DocumentSummary {
   fields: DocumentField[];
-  extractionJob: (ExtractionJob & { artifact?: { id: string; createdAt: string } | null }) | null;
+  extractionJob: (ExtractionJob & {
+    artifact?: {
+      id: string;
+      artifactType?: string | null;
+      stage?: string | null;
+      payload?: Record<string, unknown>;
+      normalized?: Record<string, unknown>;
+      warnings?: string[];
+      createdAt: string;
+    } | null;
+  }) | null;
   claim: { id: string; status: string } | null;
   review: { id: string; status: string; decisionNote: string | null } | null;
 }
@@ -188,7 +200,7 @@ export async function saveDocumentCorrections(
 
 export async function retryDocumentExtraction(
   id: string,
-  provider?: 'textract',
+  provider?: ExtractionProvider,
 ): Promise<UploadDocumentResponse> {
   return apiRequest(`/documents/${id}/extraction/retry`, {
     method: 'POST',

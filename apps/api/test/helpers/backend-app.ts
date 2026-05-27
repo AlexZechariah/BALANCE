@@ -1,4 +1,6 @@
 import type { INestApplication } from '@nestjs/common';
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { Test } from '@nestjs/testing';
 import { PrismaClient, Role, type DocumentStatus } from '@balance/db';
 import { PrismaPg } from '@prisma/adapter-pg';
@@ -64,13 +66,35 @@ function ensureTestEnv() {
   process.env.STORAGE_FILESYSTEM_ROOT ??= '/tmp/balance-api-test-storage';
   process.env.QUEUE_PROOF_NAME ??= 'queue_proof';
   process.env.EXTRACTION_QUEUE_NAME ??= 'document_extract';
-  process.env.OCR_PROVIDER ??= 'textract';
+  process.env.OCR_PROVIDER ??= 'paddleocr';
+  process.env.EXTRACTION_PROVIDER_DEFAULT ??= 'paddleocr';
+  process.env.EXTRACTION_ALLOW_LEGACY_TEXTRACT ??= 'false';
   process.env.TESSERACT_LANG ??= 'eng';
 }
 
 function createPrismaClient(): PrismaClient {
   const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });
   return new PrismaClient({ adapter });
+}
+
+async function writeTestStorageObject(storageKey: string, contentType: string) {
+  const root = path.resolve(process.env.OBJECT_STORAGE_FILESYSTEM_ROOT ?? process.env.STORAGE_FILESYSTEM_ROOT ?? '/tmp/balance-api-test-storage');
+  const normalized = storageKey.replace(/\\/g, '/').replace(/^\/+/, '');
+  const parts = normalized.split('/');
+  if (!normalized || parts.some((part) => !part || part === '.' || part === '..')) {
+    throw new Error(`Unsafe test storage key: ${storageKey}`);
+  }
+
+  const target = path.resolve(root, ...parts);
+  if (target !== root && !target.startsWith(`${root}${path.sep}`)) {
+    throw new Error(`Test storage key escaped root: ${storageKey}`);
+  }
+
+  await mkdir(path.dirname(target), { recursive: true });
+  const body = contentType === 'application/pdf'
+    ? Buffer.from('%PDF-1.4\n% Balance synthetic test document\n')
+    : Buffer.from('Balance synthetic test document\n');
+  await writeFile(target, body);
 }
 
 function peppered(password: string): string {
@@ -172,14 +196,18 @@ export async function createDocument(
   }
 ) {
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const storageKey = `documents/test-${suffix}/original.pdf`;
+  const contentType = 'application/pdf';
+  await writeTestStorageObject(storageKey, contentType);
+
   return prisma.document.create({
     data: {
       ownerId: input.ownerId,
       organizationId: input.organizationId ?? null,
       originalFilename: input.originalFilename ?? `receipt-${suffix}.pdf`,
-      contentType: 'application/pdf',
-      sizeBytes: 12,
-      storageKey: `documents/test-${suffix}/original.pdf`,
+      contentType,
+      sizeBytes: 38,
+      storageKey,
       status: input.status,
       label: input.label ?? null,
       notes: input.notes ?? null,

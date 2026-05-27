@@ -11,9 +11,11 @@ import type {
 } from '@balance/db';
 
 import { throwContractHttpError, throwValidationError } from '../common/contract-errors';
+import { ExtractionService } from '../extraction/extraction.service';
+import { ExtractionProviderValidationError } from '../extraction/extraction.validation';
 import { PrismaService } from '../prisma/prisma.service';
 import { ExtractionQueueService } from '../queue/extraction-queue.service';
-import { StorageService } from '../storage/storage.service';
+import { ObjectStorageService } from '../storage/object-storage.service';
 import { AuditService } from '../audit/audit.service';
 import {
   assertReviewVisibleToActor,
@@ -32,16 +34,6 @@ import {
 } from './document-spend';
 
 const ACCEPTED_CONTENT_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
-const EXTRACTION_PROVIDERS = new Set(['textract']);
-
-/** Resolve the default extraction provider from environment, falling back to 'textract'. */
-function resolveDefaultProvider(): ExtractionProvider {
-  const fromEnv = (process.env.EXTRACTION_PROVIDER_DEFAULT || '').trim().toLowerCase() as ExtractionProvider;
-  if (EXTRACTION_PROVIDERS.has(fromEnv)) {
-    return fromEnv;
-  }
-  return 'textract' satisfies ExtractionProvider;
-}
 
 function fieldLabel(name: FieldName): string {
   const labels: Record<string, string> = {
@@ -180,6 +172,14 @@ function jsonArray(value: Prisma.JsonValue | null | undefined): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
+function stringArray(value: Prisma.JsonValue | null | undefined): string[] {
+  return jsonArray(value).filter((item): item is string => typeof item === 'string');
+}
+
+function jsonObject(value: Prisma.JsonValue | null | undefined): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
 function documentFingerprint(input: {
   merchantName: string | null;
   documentDate: string | null;
@@ -285,7 +285,8 @@ function assertDocumentVisibleToActor(
 export class DocumentsService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
-    @Inject(StorageService) private readonly storage: StorageService,
+    @Inject(ObjectStorageService) private readonly storage: ObjectStorageService,
+    @Inject(ExtractionService) private readonly extraction: ExtractionService,
     @Inject(ExtractionQueueService) private readonly queue: ExtractionQueueService,
     @Inject(AuditService) private readonly audit: AuditService
   ) {}
@@ -309,6 +310,8 @@ export class DocumentsService {
       throwContractHttpError(415, 'UNSUPPORTED_MEDIA_TYPE', 'Unsupported media type', []);
     }
 
+    const provider = this.extraction.resolveProvider(null) as ExtractionProvider;
+
     const document = await this.prisma.document.create({
       data: {
         ownerId: input.ownerId,
@@ -325,20 +328,27 @@ export class DocumentsService {
         tags: parseTags(input.tags),
         claimIntent: input.claimIntent ?? null,
         documentType: input.documentType ?? (input.contentType === 'application/pdf' ? 'receipt_pdf' : 'receipt'),
-        extractionSummary: { provider: resolveDefaultProvider(), stage: 'queued' }
+        extractionSummary: { provider, stage: 'queued', pipelineVersion: this.extraction.getPipelineVersion() }
       }
     });
 
-    const { storageKey } = await this.storage.saveUploadedDocumentFile({
+    const { storageKey, objectRef } = await this.storage.saveUploadedDocumentFile({
       documentId: document.id,
       contentType: input.contentType,
-      body: input.body
+      body: input.body,
+      originalFilename: input.originalFilename
     });
 
     const updated = await this.prisma.document.update({
       where: { id: document.id },
       data: {
         storageKey,
+        storageProvider: objectRef.provider,
+        storageBucket: objectRef.bucket ?? objectRef.root ?? null,
+        storageEtag: objectRef.etag ?? null,
+        storageSha256: objectRef.sha256,
+        storageSizeBytes: objectRef.sizeBytes,
+        storageContentType: objectRef.contentType,
         status: 'queued' satisfies DocumentStatus
       }
     });
@@ -347,7 +357,8 @@ export class DocumentsService {
       data: {
         documentId: updated.id,
         status: 'queued' satisfies ExtractionJobStatus,
-        provider: resolveDefaultProvider()
+        provider,
+        pipelineVersion: this.extraction.getPipelineVersion()
       }
     });
 
@@ -375,6 +386,8 @@ export class DocumentsService {
     await this.queue.enqueue({
       documentId: updated.id,
       extractionJobId: extractionJob.id,
+      pipelineVersion: this.extraction.getPipelineVersion(),
+      objectRef,
       storageDriver: updated.storageDriver,
       storageKey: updated.storageKey,
       contentType: updated.contentType,
@@ -389,6 +402,8 @@ export class DocumentsService {
         documentId: extractionJob.documentId,
         status: extractionJob.status,
         provider: extractionJob.provider,
+        warningCodes: [],
+        confidenceSummary: {},
         errorMessage: extractionJob.errorMessage,
         createdAt: extractionJob.createdAt.toISOString(),
         startedAt: extractionJob.startedAt?.toISOString() ?? null,
@@ -423,24 +438,31 @@ export class DocumentsService {
       ]);
     }
 
-    const requestedProvider = (input.provider || '').trim().toLowerCase();
-    const provider = (requestedProvider || resolveDefaultProvider()).trim().toLowerCase();
+    const provider = this.resolveProviderForRequest(input.provider) as ExtractionProvider;
 
-    if (!EXTRACTION_PROVIDERS.has(provider)) {
-      throwValidationError([{ path: 'provider', message: 'Textract is the only supported extraction provider' }], 422);
-    }
+    const objectRef = await this.storage.describeDocumentFile({
+      storageKey: document.storageKey,
+      expectedContentType: document.contentType,
+      originalFilename: document.originalFilename
+    });
 
     const updated = await this.prisma.document.update({
       where: { id: document.id },
       data: {
         status: 'queued' satisfies DocumentStatus,
+        storageProvider: objectRef.provider,
+        storageBucket: objectRef.bucket ?? objectRef.root ?? null,
+        storageEtag: objectRef.etag ?? null,
+        storageSha256: objectRef.sha256,
+        storageSizeBytes: objectRef.sizeBytes,
+        storageContentType: objectRef.contentType,
         merchantName: null,
         documentDate: null,
         amountMinor: null,
         currency: null,
         qualityScore: null,
         qualityWarnings: [],
-        extractionSummary: { provider, stage: 'queued', retry: true }
+        extractionSummary: { provider, stage: 'queued', retry: true, pipelineVersion: this.extraction.getPipelineVersion() }
       }
     });
 
@@ -448,7 +470,8 @@ export class DocumentsService {
       data: {
         documentId: updated.id,
         status: 'queued' satisfies ExtractionJobStatus,
-        provider: provider as ExtractionProvider
+        provider,
+        pipelineVersion: this.extraction.getPipelineVersion()
       }
     });
 
@@ -466,6 +489,8 @@ export class DocumentsService {
     await this.queue.enqueue({
       documentId: updated.id,
       extractionJobId: extractionJob.id,
+      pipelineVersion: this.extraction.getPipelineVersion(),
+      objectRef,
       storageDriver: updated.storageDriver,
       storageKey: updated.storageKey,
       contentType: updated.contentType,
@@ -480,12 +505,25 @@ export class DocumentsService {
         documentId: extractionJob.documentId,
         status: extractionJob.status,
         provider: extractionJob.provider,
+        warningCodes: [],
+        confidenceSummary: {},
         errorMessage: extractionJob.errorMessage,
         createdAt: extractionJob.createdAt.toISOString(),
         startedAt: extractionJob.startedAt?.toISOString() ?? null,
         completedAt: extractionJob.completedAt?.toISOString() ?? null
       }
     };
+  }
+
+  private resolveProviderForRequest(provider: string | null | undefined) {
+    try {
+      return this.extraction.resolveProvider(provider);
+    } catch (err) {
+      if (err instanceof ExtractionProviderValidationError) {
+        throwValidationError([{ path: 'provider', message: err.message }], 422);
+      }
+      throw err;
+    }
   }
 
   async list(input: {
@@ -564,6 +602,8 @@ export class DocumentsService {
               id: d.extractionJobs[0].id,
               status: d.extractionJobs[0].status,
               provider: d.extractionJobs[0].provider,
+              warningCodes: stringArray(d.extractionJobs[0].warningCodes),
+              confidenceSummary: jsonObject(d.extractionJobs[0].confidenceSummary),
               errorMessage: d.extractionJobs[0].errorMessage,
               createdAt: d.extractionJobs[0].createdAt.toISOString(),
               startedAt: d.extractionJobs[0].startedAt?.toISOString() ?? null,
@@ -608,6 +648,8 @@ export class DocumentsService {
               id: latestJob.id,
               status: latestJob.status,
               provider: latestJob.provider,
+              warningCodes: stringArray(latestJob.warningCodes),
+              confidenceSummary: jsonObject(latestJob.confidenceSummary),
               errorMessage: latestJob.errorMessage,
               createdAt: latestJob.createdAt.toISOString(),
               startedAt: latestJob.startedAt?.toISOString() ?? null,
@@ -616,7 +658,10 @@ export class DocumentsService {
                 ? {
                     id: latestJob.artifact.id,
                     normalized: latestJob.artifact.normalized,
-                    warnings: latestJob.artifact.warnings,
+                    warnings: stringArray(latestJob.artifact.warnings),
+                    payload: latestJob.artifact.payload,
+                    artifactType: latestJob.artifact.artifactType,
+                    stage: latestJob.artifact.stage,
                     createdAt: latestJob.artifact.createdAt.toISOString()
                   }
                 : null

@@ -54,32 +54,18 @@ services:
       QUEUE_PROOF_NAME: ${QUEUE_PROOF_NAME:-queue_proof}
       EXTRACTION_QUEUE_NAME: ${EXTRACTION_QUEUE_NAME:-document_extract}
       DATABASE_URL: postgresql://balance:balance@postgres:5432/balance?schema=public
+      OBJECT_STORAGE_PROVIDER: ${OBJECT_STORAGE_PROVIDER:-filesystem}
       STORAGE_DRIVER: ${STORAGE_DRIVER:-filesystem}
       # Hardcoded to /data/balance-storage because this runs inside a Linux container.
       # The host .env may contain a Windows absolute path (e.g. C:/Users/...) that does not exist inside Docker.
+      OBJECT_STORAGE_FILESYSTEM_ROOT: /data/balance-storage
       STORAGE_FILESYSTEM_ROOT: /data/balance-storage
-      # AWS credentials/region are required only when using STORAGE_DRIVER=s3 or OCR_PROVIDER=textract.
-      # Recommended local auth: mount your host AWS config/credentials directory into /root/.aws (see volumes below)
-      # and set AWS_PROFILE (optional) + AWS_REGION/S3_REGION as needed.
-      AWS_REGION: ${AWS_REGION:-}
-      AWS_PROFILE: ${AWS_PROFILE:-default}
-      # AWS credential env vars are injected by up-worker-aws.ps1 via
-      # Set-AwsEnvFromCliLogin before docker compose up runs.  They are
-      # necessary because boto3 cannot natively resolve the AWS CLI
-      # login_session used by this profile, and the slim Python image
-      # does not include the aws CLI binary.
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
-      AWS_SDK_LOAD_CONFIG: ${AWS_SDK_LOAD_CONFIG:-1}
-      S3_BUCKET: ${S3_BUCKET:-}
-      S3_REGION: ${S3_REGION:-}
-      OCR_PROVIDER: ${OCR_PROVIDER:-textract}
+      OCR_PROVIDER: ${OCR_PROVIDER:-paddleocr}
+      OCR_ENABLE_TESSERACT_FALLBACK: ${OCR_ENABLE_TESSERACT_FALLBACK:-true}
       TESSERACT_LANG: ${TESSERACT_LANG:-eng}
       TESSERACT_OEM: ${TESSERACT_OEM:-1}
       TESSERACT_PSM: ${TESSERACT_PSM:-6}
       PDF_OCR_DPI: ${PDF_OCR_DPI:-300}
-      TEXTRACT_PDF_TIMEOUT_SECONDS: ${TEXTRACT_PDF_TIMEOUT_SECONDS:-120}
     depends_on:
       redis:
         condition: service_healthy
@@ -94,33 +80,32 @@ services:
       retries: 20
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     volumes:
-      # Mount Python app source code so extraction code changes take effect
-      # without a Docker rebuild — the bind mount overlays the image's COPY layer.
-      - type: bind
-        source: services/worker/app
-        target: /worker/app
-      - type: bind
-        source: ${BALANCE_STORAGE_HOST_PATH:-tmp/balance-storage}
-        target: /data/balance-storage
+      - balance-storage:/data/balance-storage
     restart: unless-stopped
 
-  # Note on relative paths in bind-mounts:
-  # Docker Compose with --project-directory . resolves ${BALANCE_STORAGE_HOST_PATH:-tmp/balance-storage}
-  # relative to the project directory (repo root). That is correct: <root>/tmp/balance-storage.
-  # Do NOT use ../../tmp/balance-storage here — that goes up from the project directory, not
-  # from the compose file's directory, producing a completely wrong host path on Windows.
+  # AWS profile remains legacy-only and may use host bind mounts for credentials.
   worker-aws:
     profiles: ['aws']
     extends:
       service: worker
+    environment:
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_PROFILE: ${AWS_PROFILE:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_SDK_LOAD_CONFIG: ${AWS_SDK_LOAD_CONFIG:-0}
+      AWS_EC2_METADATA_DISABLED: ${AWS_EC2_METADATA_DISABLED:-true}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_REGION: ${S3_REGION:-}
     volumes:
       # Mount Python app source code (inherited from worker, but must be
       # restated here because extends replaces volume lists instead of appending).
       - type: bind
-        source: services/worker/app
+        source: ../../services/worker/app
         target: /worker/app
       - type: bind
-        source: ${BALANCE_STORAGE_HOST_PATH:-tmp/balance-storage}
+        source: ${BALANCE_STORAGE_HOST_PATH:-../../tmp/balance-storage}
         target: /data/balance-storage
       # Mount host AWS config/credentials for boto3.
       # Set AWS_CONFIG_HOST_PATH if your creds are not at the default location.
@@ -137,29 +122,22 @@ services:
       APP_NAME: ${APP_NAME:-Balance}
       PRODUCT_NAME: ${PRODUCT_NAME:-Balance}
       PROJECT_SLUG: ${PROJECT_SLUG:-balance}
-      DEPLOYMENT_NAMESPACE: ${DEPLOYMENT_NAMESPACE:-swe40006-project}
+      DEPLOYMENT_NAMESPACE: ${DEPLOYMENT_NAMESPACE:-balance}
       APP_ENV: local
       NODE_ENV: ${NODE_ENV:-development}
-      APP_VERSION: ${APP_VERSION:-0.4.1}
+      APP_VERSION: ${APP_VERSION:-0.5.0}
       GIT_COMMIT: ${GIT_COMMIT:-local}
       BUILD_ID: ${BUILD_ID:-local-build}
       API_PORT: 3001
       DATABASE_URL: postgresql://balance:balance@postgres:5432/balance?schema=public
       REDIS_URL: redis://redis:6379
+      OBJECT_STORAGE_PROVIDER: ${OBJECT_STORAGE_PROVIDER:-filesystem}
       STORAGE_DRIVER: ${STORAGE_DRIVER:-filesystem}
       # Hardcoded to /data/balance-storage (same reason as worker — host Windows path is meaningless inside Docker).
+      OBJECT_STORAGE_FILESYSTEM_ROOT: /data/balance-storage
       STORAGE_FILESYSTEM_ROOT: /data/balance-storage
-      EXTRACTION_PROVIDER_DEFAULT: ${EXTRACTION_PROVIDER_DEFAULT:-textract}
-      AWS_REGION: ${AWS_REGION:-}
-      AWS_PROFILE: ${AWS_PROFILE:-default}
-      # AWS credential env vars — same reason as worker service (login_session
-      # requires the AWS CLI binary, which is not in the slim image).
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
-      AWS_SDK_LOAD_CONFIG: ${AWS_SDK_LOAD_CONFIG:-1}
-      S3_BUCKET: ${S3_BUCKET:-}
-      S3_REGION: ${S3_REGION:-}
+      EXTRACTION_PROVIDER_DEFAULT: ${EXTRACTION_PROVIDER_DEFAULT:-paddleocr}
+      EXTRACTION_ALLOW_LEGACY_TEXTRACT: ${EXTRACTION_ALLOW_LEGACY_TEXTRACT:-false}
       JWT_SECRET: ${JWT_SECRET:-replace-this-local-only}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1h}
       PASSWORD_PEPPER: ${PASSWORD_PEPPER:-replace-this-local-only}
@@ -171,18 +149,26 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - type: bind
-        source: ${BALANCE_STORAGE_HOST_PATH:-tmp/balance-storage}
-        target: /data/balance-storage
+      - balance-storage:/data/balance-storage
     restart: unless-stopped
 
   api-aws:
     profiles: ['aws']
     extends:
       service: api
+    environment:
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_PROFILE: ${AWS_PROFILE:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_SDK_LOAD_CONFIG: ${AWS_SDK_LOAD_CONFIG:-0}
+      AWS_EC2_METADATA_DISABLED: ${AWS_EC2_METADATA_DISABLED:-true}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_REGION: ${S3_REGION:-}
     volumes:
       - type: bind
-        source: ${BALANCE_STORAGE_HOST_PATH:-tmp/balance-storage}
+        source: ${BALANCE_STORAGE_HOST_PATH:-../../tmp/balance-storage}
         target: /data/balance-storage
       - type: bind
         source: ${AWS_CONFIG_HOST_PATH:-${USERPROFILE}/.aws}
@@ -203,10 +189,10 @@ services:
       APP_NAME: ${APP_NAME:-Balance}
       PRODUCT_NAME: ${PRODUCT_NAME:-Balance}
       PROJECT_SLUG: ${PROJECT_SLUG:-balance}
-      DEPLOYMENT_NAMESPACE: ${DEPLOYMENT_NAMESPACE:-swe40006-project}
+      DEPLOYMENT_NAMESPACE: ${DEPLOYMENT_NAMESPACE:-balance}
       APP_ENV: local
       NODE_ENV: ${NODE_ENV:-development}
-      APP_VERSION: ${APP_VERSION:-0.4.1}
+      APP_VERSION: ${APP_VERSION:-0.5.0}
       GIT_COMMIT: ${GIT_COMMIT:-local}
       BUILD_ID: ${BUILD_ID:-local-build}
       WEB_PORT: 3000
@@ -229,3 +215,4 @@ services:
 
 volumes:
   postgres18-data-v18:
+  balance-storage:

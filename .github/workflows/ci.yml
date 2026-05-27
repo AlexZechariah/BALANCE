@@ -12,7 +12,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   build-and-test:
@@ -53,26 +52,17 @@ jobs:
       PASSWORD_PEPPER: ci-placeholder-only
       STORAGE_DRIVER: filesystem
       STORAGE_FILESYSTEM_ROOT: /tmp/balance-ci-storage
-      S3_BUCKET: ${{ vars.S3_BUCKET }}
-      S3_REGION: ${{ vars.S3_REGION }}
-      AWS_REGION: ${{ vars.AWS_REGION }}
       QUEUE_PROOF_NAME: queue_proof
       EXTRACTION_QUEUE_NAME: document_extract
-      OCR_PROVIDER: textract
+      OCR_PROVIDER: paddleocr
       SEED_CONSUMER_PASSWORD: ci-consumer-password
       SEED_REVIEWER_PASSWORD: ci-reviewer-password
       SEED_ADMIN_PASSWORD: ci-admin-password
-      APP_VERSION: ${{ vars.APP_VERSION || '0.4.1' }}
+      APP_VERSION: ${{ vars.APP_VERSION || '0.5.0' }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6.0.2
-
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6.1.1
-        with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6.0.5
@@ -128,9 +118,11 @@ jobs:
         run: docker compose -f infra/compose/compose.local.yml config
 
       - name: Validate staging Compose file
+        if: ${{ vars.ENABLE_LEGACY_AWS_DEPLOY == 'true' }}
         run: docker compose -f infra/compose/compose.staging.yml config
 
       - name: Validate production Compose file
+        if: ${{ vars.ENABLE_LEGACY_AWS_DEPLOY == 'true' }}
         run: docker compose -f infra/compose/compose.production.yml config
 
       - name: Validate queue proof
@@ -142,7 +134,10 @@ jobs:
   deploy-staging:
     name: Deploy staging
     needs: build-and-test
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && vars.ENABLE_LEGACY_AWS_DEPLOY == 'true' }}
+    permissions:
+      id-token: write
+      contents: read
     runs-on: ubuntu-24.04
     environment: staging
     concurrency:
@@ -160,7 +155,7 @@ jobs:
       S3_BUCKET: ${{ vars.S3_BUCKET }}
       SSM_EXECUTION_TIMEOUT_SECONDS: '3600'
       SSM_STATUS_POLL_SECONDS: '10'
-      APP_DIR: /opt/swe40006-project
+      APP_DIR: /opt/balance
       APP_URL: ${{ secrets.STAGING_APP_URL }}
       API_URL: ${{ secrets.STAGING_API_URL }}
       DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
@@ -172,7 +167,7 @@ jobs:
       PASSWORD_PEPPER: ${{ secrets.STAGING_PASSWORD_PEPPER }}
       STORAGE_DRIVER: s3
       S3_REGION: ${{ vars.S3_REGION || vars.AWS_REGION }}
-      OCR_PROVIDER: textract
+      OCR_PROVIDER: paddleocr
       QUEUE_PROOF_NAME: ${{ vars.QUEUE_PROOF_NAME || 'queue_proof' }}
       EXTRACTION_QUEUE_NAME: ${{ vars.EXTRACTION_QUEUE_NAME || 'document_extract' }}
       SEED_CONSUMER_PASSWORD: ${{ secrets.STAGING_SEED_CONSUMER_PASSWORD }}
@@ -180,9 +175,9 @@ jobs:
       SEED_ADMIN_PASSWORD: ${{ secrets.STAGING_SEED_ADMIN_PASSWORD }}
       GIT_COMMIT: ${{ github.sha }}
       BUILD_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
-      APP_VERSION: ${{ vars.APP_VERSION || '0.4.0' }}
+      APP_VERSION: ${{ vars.APP_VERSION || '0.5.0' }}
       GH_PAT: ${{ secrets.GH_PAT }}
-      REPOSITORY_URL: https://github.com/Alex-Zechariah-02/SWE40006-Project.git
+      REPOSITORY_URL: https://github.com/AlexZechariah/BALANCE.git
       COMPOSE_FILE: infra/compose/compose.staging.yml
       APP_ENV: staging
 

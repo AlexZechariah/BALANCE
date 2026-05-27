@@ -16,7 +16,6 @@ def _env_int(name: str, fallback: int) -> int:
 
 
 APP_ENV = _runtime_env()
-AWS_DEPLOYMENT_ENVS = {"staging", "production"}
 
 
 def env(name: str, fallback: str | None = None) -> str:
@@ -37,26 +36,21 @@ EXTRACTION_QUEUE_NAME = env("EXTRACTION_QUEUE_NAME", "document_extract")
 DATABASE_URL = env("DATABASE_URL", "postgresql://balance:balance@postgres:5432/balance?schema=public")
 
 AWS_REGION = env("AWS_REGION", "")
+OBJECT_STORAGE_PROVIDER = env("OBJECT_STORAGE_PROVIDER", env("STORAGE_DRIVER", "filesystem")).lower()
 STORAGE_DRIVER = env("STORAGE_DRIVER", "filesystem").lower()
-if APP_ENV in AWS_DEPLOYMENT_ENVS and STORAGE_DRIVER != "s3":
-    raise RuntimeError(f"STORAGE_DRIVER must be s3 in {APP_ENV}")
-STORAGE_FILESYSTEM_ROOT = env("STORAGE_FILESYSTEM_ROOT", "/data/balance-storage")
+STORAGE_FILESYSTEM_ROOT = env("OBJECT_STORAGE_FILESYSTEM_ROOT", env("STORAGE_FILESYSTEM_ROOT", "/data/balance-storage"))
 S3_BUCKET = env("S3_BUCKET", "")
 S3_REGION = env("S3_REGION", AWS_REGION)
-if APP_ENV in AWS_DEPLOYMENT_ENVS:
-    if not AWS_REGION:
-        raise RuntimeError(f"AWS_REGION is required in {APP_ENV}")
-    if not S3_BUCKET:
-        raise RuntimeError(f"S3_BUCKET is required in {APP_ENV}")
-    if not S3_REGION:
-        raise RuntimeError(f"S3_REGION is required in {APP_ENV}")
-    if S3_REGION != AWS_REGION:
-        raise RuntimeError(f"S3_REGION must match AWS_REGION in {APP_ENV}")
+OBJECT_STORAGE_ARTIFACT_ROOT = env("OBJECT_STORAGE_ARTIFACT_ROOT", f"{STORAGE_FILESYSTEM_ROOT.rstrip('/')}/artifacts")
 
-OCR_PROVIDER = env("OCR_PROVIDER", "textract").lower()
-if APP_ENV in AWS_DEPLOYMENT_ENVS and OCR_PROVIDER != "textract":
-    raise RuntimeError(f"OCR_PROVIDER must be textract in {APP_ENV}")
+OCR_PROVIDER = env("OCR_PROVIDER", env("EXTRACTION_PROVIDER_DEFAULT", "paddleocr")).lower()
+EXTRACTION_PROVIDER_DEFAULT = env("EXTRACTION_PROVIDER_DEFAULT", OCR_PROVIDER).lower()
+EXTRACTION_ALLOW_LEGACY_TEXTRACT = env("EXTRACTION_ALLOW_LEGACY_TEXTRACT", "false").lower() == "true"
+OCR_ENABLE_TESSERACT_FALLBACK = env("OCR_ENABLE_TESSERACT_FALLBACK", "true").lower() == "true"
 TESSERACT_LANG = env("TESSERACT_LANG", "eng")
+PIPELINE_VERSION = env("PIPELINE_VERSION", "v0.5.0-open-ocr")
+PDF_OCR_DPI = _env_int("PDF_OCR_DPI", 300)
+PDF_MAX_PAGES = _env_int("PDF_MAX_PAGES", 3)
 
 TEXTRACT_PREPROCESS = env("TEXTRACT_PREPROCESS", "false").lower() == "true"
 TEXTRACT_SCRATCH_PREFIX = env("TEXTRACT_SCRATCH_PREFIX", "textract-scratch")

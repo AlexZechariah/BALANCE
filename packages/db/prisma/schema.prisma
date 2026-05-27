@@ -32,6 +32,7 @@ enum DocumentStatus {
 enum StorageDriver {
   filesystem
   s3
+  s3Compatible
 }
 
 enum ExtractionJobStatus {
@@ -42,8 +43,10 @@ enum ExtractionJobStatus {
 }
 
 enum ExtractionProvider {
+  paddleocr
   tesseract
   textract
+  legacy_textract
   manual
 }
 
@@ -214,6 +217,13 @@ model Document {
   sizeBytes      Int
   storageDriver  StorageDriver @default(filesystem)
   storageKey     String
+  storageProvider String?
+  storageBucket   String?
+  storageEtag     String?
+  storageSha256   String?
+  storageSizeBytes Int?
+  storageContentType String?
+  pageCount      Int?
   status         DocumentStatus
   label          String?
   notes          String?
@@ -295,6 +305,9 @@ model ExtractionJob {
   documentId  String             @db.Uuid
   status      ExtractionJobStatus
   provider    ExtractionProvider
+  pipelineVersion String?
+  warningCodes Json               @default("[]")
+  confidenceSummary Json          @default("{}")
   errorMessage String?
 
   createdAt   DateTime @default(now())
@@ -313,6 +326,9 @@ model ExtractionArtifact {
   id              String             @id @default(uuid()) @db.Uuid
   extractionJobId String             @unique @db.Uuid
   provider        ExtractionProvider
+  artifactType    String?
+  stage           String?
+  payload         Json               @default("{}")
   rawResponse     Json               @default("{}")
   normalized      Json               @default("{}")
   warnings        Json               @default("[]")

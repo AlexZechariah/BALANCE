@@ -38,6 +38,17 @@ function displayValue(field: DocumentField): string {
   return field.correctedValue ?? field.value;
 }
 
+function confidenceFromSummary(summary: Record<string, unknown> | undefined, fallback: number | null | undefined): number | null {
+  const value = summary?.document;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof fallback === 'number' && Number.isFinite(fallback)) return fallback;
+  return null;
+}
+
+function warningLabel(code: string): string {
+  return code.replace(/[_:]+/g, ' ');
+}
+
 interface MetadataFormState {
   label: string;
   category: string;
@@ -226,7 +237,7 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
     setRetrying(true);
     setError(null);
     try {
-      await retryDocumentExtraction(doc.id, 'textract');
+      await retryDocumentExtraction(doc.id, 'paddleocr');
       await load();
     } catch (err) {
       setError(err instanceof BalanceApiError ? err.error.message : 'Failed to retry extraction.');
@@ -314,11 +325,21 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
   const fieldCategories = (Object.keys(grouped) as FieldCategory[]).filter((category) => grouped[category].length > 0);
   const isPolling = POLLING_STATUSES.has(doc.status);
   const claimHrefBase = documentsHref.startsWith('/enterprise') ? '/enterprise/claims' : '/app/claims';
+  const extractionWarnings = Array.from(new Set([
+    ...(doc.extractionJob?.warningCodes ?? []),
+    ...(doc.extractionJob?.artifact?.warnings ?? []),
+    ...((doc.qualityWarnings ?? []).filter((warning): warning is string => typeof warning === 'string')),
+  ]));
+  const extractionConfidence = confidenceFromSummary(doc.extractionJob?.confidenceSummary, doc.qualityScore);
+  const correctionRequired =
+    doc.status === 'correction_required' ||
+    doc.extractionJob?.confidenceSummary?.requiresCorrection === true ||
+    extractionWarnings.length > 0;
   const showExtractionFailure = doc.status === 'failed' || doc.extractionJob?.status === 'failed';
-  const showExtractionPanel = isPolling || showExtractionFailure;
+  const showExtractionPanel = Boolean(doc.extractionJob) || isPolling || showExtractionFailure || correctionRequired;
   const extractionError = doc.extractionJob?.errorMessage || (doc.status === 'failed' ? 'Extraction failed.' : null);
   const extractionErrorLower = (extractionError || '').toLowerCase();
-  const looksLikeExpiredAwsToken = extractionErrorLower.includes('expiredtoken');
+  const looksLikeProviderDependency = extractionErrorLower.includes('provider') || extractionErrorLower.includes('ocr');
   const documentTitle = doc.label || doc.originalFilename;
 
   return (
@@ -418,6 +439,14 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
                       {doc.extractionJob?.provider && (
                         <span className="text-xs text-muted-foreground">Provider: <span className="capitalize text-foreground">{doc.extractionJob.provider}</span></span>
                       )}
+                      {extractionConfidence != null && (
+                        <Badge variant={extractionConfidence >= 80 ? 'success' : extractionConfidence >= 55 ? 'warning' : 'danger'}>
+                          {Math.round(extractionConfidence)}% confidence
+                        </Badge>
+                      )}
+                      {correctionRequired && (
+                        <Badge variant="warning">Correction required</Badge>
+                      )}
                     </div>
                     {isOwner && (
                       <Button type="button" variant="secondary" size="sm" onClick={handleRetry} disabled={retrying || !canRetry}>
@@ -446,6 +475,17 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
                     </>
                   )}
 
+                  {extractionWarnings.length > 0 && (
+                    <div className="grid gap-2 rounded-md border border-border bg-muted/30 p-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Warning codes</p>
+                      <div className="flex flex-wrap gap-2">
+                        {extractionWarnings.map((warning) => (
+                          <Badge key={warning} variant="warning">{warningLabel(warning)}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {showExtractionFailure && (
                     <Alert variant="destructive">
                       <div className="grid gap-1">
@@ -453,15 +493,15 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
                         {extractionError && <p className="text-sm text-destructive">{extractionError}</p>}
                         {user && ['staff', 'admin', 'system_admin'].includes(user.role) && (
                           <p className="text-xs text-muted-foreground">
-                            {looksLikeExpiredAwsToken
+                            {looksLikeProviderDependency
                               ? (
                                 <>
-                                  AWS runtime credentials likely expired. Ask an operator to refresh the EC2 instance role credential path, then retry extraction.
+                                  The selected OCR provider needs attention. Check the worker OCR dependencies and retry extraction.
                                 </>
                               )
                               : (
                                 <>
-                                  Ensure the worker can reach S3 and Textract with its runtime AWS credentials, then retry extraction.
+                                  Ensure the local worker can read the stored document and run the configured OCR provider, then retry extraction.
                                 </>
                               )}
                           </p>

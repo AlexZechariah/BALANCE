@@ -48,10 +48,8 @@ describe('RoutePlaceholderShell', () => {
     process.env.API_PROXY_TARGET = 'http://api:3001';
     process.env.NEXT_PUBLIC_API_HEALTH_PATH = '/gateway/health';
     process.env.NEXT_PUBLIC_API_VERSION_PATH = '/gateway/version';
-    process.env.STORAGE_DRIVER = 's3';
-    process.env.S3_BUCKET = 'ci-placeholder-only';
-    process.env.S3_REGION = 'ap-southeast-5';
-    process.env.AWS_REGION = 'ap-southeast-5';
+    process.env.OBJECT_STORAGE_PROVIDER = 'filesystem';
+    process.env.STORAGE_DRIVER = 'filesystem';
 
     const html = renderToStaticMarkup(
       <RoutePlaceholderShell
@@ -75,10 +73,8 @@ describe('RoutePlaceholderShell', () => {
 
   it('renders the login placeholder route', () => {
     process.env.APP_ENV = 'production';
-    process.env.STORAGE_DRIVER = 's3';
-    process.env.S3_BUCKET = 'ci-placeholder-only';
-    process.env.S3_REGION = 'ap-southeast-5';
-    process.env.AWS_REGION = 'ap-southeast-5';
+    process.env.OBJECT_STORAGE_PROVIDER = 'filesystem';
+    process.env.STORAGE_DRIVER = 'filesystem';
 
     const html = renderToStaticMarkup(
       <RoutePlaceholderShell

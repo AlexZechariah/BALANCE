@@ -3,17 +3,21 @@ import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 
 import { throwContractHttpError } from '../common/contract-errors';
+import type { ObjectReference } from '../storage/object-storage.types';
 
 import { DEFAULT_EXTRACTION_JOB_NAME, DEFAULT_EXTRACTION_QUEUE_NAME } from './extraction-queue.constants';
 
 export type ExtractionJobPayload = {
   documentId: string;
   extractionJobId: string;
+  pipelineVersion: string;
+  objectRef: ObjectReference;
   storageDriver?: string;
   storageKey: string;
   contentType: string;
   originalFilename: string;
-  provider?: string;
+  provider: string;
+  pageLimit?: number | null;
 };
 
 function requiredEnv(name: string, fallback?: string): string {

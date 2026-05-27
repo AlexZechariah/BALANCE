@@ -6,7 +6,7 @@ from bullmq import Worker
 from redis.asyncio import Redis
 
 from .queue_proof import process_queue_proof
-from .extraction_worker import process_extraction
+from .open_ocr_worker import process_extraction
 from . import settings
 from . import db
 
@@ -19,7 +19,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-VERSION = "0.4.1"
+VERSION = "0.5.0"
 
 app = FastAPI(title="Balance Worker", version=VERSION)
 

@@ -1,4 +1,6 @@
-FROM python:3.13.13-slim
+# syntax=docker/dockerfile:1.7
+
+FROM paddlepaddle/paddle:3.2.0
 
 WORKDIR /worker
 
@@ -10,10 +12,11 @@ RUN apt-get update \
     curl \
     poppler-utils \
     tesseract-ocr \
+    tesseract-ocr-eng \
   && rm -rf /var/lib/apt/lists/*
 
 COPY services/worker/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
 
 COPY services/worker/app ./app
 

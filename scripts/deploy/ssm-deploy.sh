@@ -22,7 +22,7 @@ reject_placeholder() {
   esac
 }
 
-APP_DIR="${APP_DIR:-/opt/swe40006-project}"
+APP_DIR="${APP_DIR:-/opt/balance}"
 COMPOSE_FILE="${COMPOSE_FILE:-}"
 APP_ENV="${APP_ENV:-}"
 GIT_COMMIT="${GIT_COMMIT:-}"
@@ -55,11 +55,6 @@ if [ "$APP_ENV" = 'staging' ] || [ "$APP_ENV" = 'production' ]; then
 
   if [ -n "${STORAGE_DRIVER:-}" ] && [ "$STORAGE_DRIVER" != 's3' ]; then
     printf 'STORAGE_DRIVER must be s3 in %s (got %s)\n' "$APP_ENV" "$STORAGE_DRIVER" >&2
-    exit 1
-  fi
-
-  if [ -n "${OCR_PROVIDER:-}" ] && [ "$OCR_PROVIDER" != 'textract' ]; then
-    printf 'OCR_PROVIDER must be textract in %s (got %s)\n' "$APP_ENV" "$OCR_PROVIDER" >&2
     exit 1
   fi
 
@@ -135,10 +130,10 @@ printf 'BUILD_ID=%s\n' "$BUILD_ID"
 export APP_NAME="${APP_NAME:-Balance}"
 export PRODUCT_NAME="${PRODUCT_NAME:-Balance}"
 export PROJECT_SLUG="${PROJECT_SLUG:-balance}"
-export DEPLOYMENT_NAMESPACE="${DEPLOYMENT_NAMESPACE:-swe40006-project}"
+export DEPLOYMENT_NAMESPACE="${DEPLOYMENT_NAMESPACE:-balance}"
 export APP_ENV
 export NODE_ENV="${NODE_ENV:-production}"
-export APP_VERSION="${APP_VERSION:-0.4.1}"
+export APP_VERSION="${APP_VERSION:-0.5.0}"
 export GIT_COMMIT
 export BUILD_ID
 export GH_PAT
@@ -200,14 +195,9 @@ export SEED_CONSUMER_PASSWORD="${SEED_CONSUMER_PASSWORD:-replace-this-local-only
 export SEED_REVIEWER_PASSWORD="${SEED_REVIEWER_PASSWORD:-replace-this-local-only}"
 export SEED_ADMIN_PASSWORD="${SEED_ADMIN_PASSWORD:-replace-this-local-only}"
 
-export OCR_PROVIDER="${OCR_PROVIDER:-textract}"
-if [ "$APP_ENV" = 'staging' ] || [ "$APP_ENV" = 'production' ]; then
-  if [ "$OCR_PROVIDER" != 'textract' ]; then
-    printf 'OCR_PROVIDER must be textract in %s (got %s)\n' "$APP_ENV" "$OCR_PROVIDER" >&2
-    exit 1
-  fi
-  export OCR_PROVIDER='textract'
-fi
+export OCR_PROVIDER="${OCR_PROVIDER:-paddleocr}"
+export EXTRACTION_PROVIDER_DEFAULT="${EXTRACTION_PROVIDER_DEFAULT:-$OCR_PROVIDER}"
+export EXTRACTION_ALLOW_LEGACY_TEXTRACT="${EXTRACTION_ALLOW_LEGACY_TEXTRACT:-false}"
 
 docker compose -f "$COMPOSE_FILE" down --remove-orphans
 docker compose -f "$COMPOSE_FILE" up -d --build --remove-orphans

@@ -3,7 +3,7 @@ import {
   CLAIM_STATUSES,
   DOCUMENT_STATUSES,
   REVIEW_STATUSES,
-  EXTRACTION_PROVIDERS,
+  REQUESTABLE_EXTRACTION_PROVIDERS,
   FIELD_NAMES,
   BALANCE_CATEGORIES,
   CONSUMER_RECORD_TYPES,
@@ -94,7 +94,7 @@ export const correctionPayloadSchema = z.object({
 });
 
 export const extractionRetrySchema = z.object({
-  provider: z.enum(EXTRACTION_PROVIDERS).optional()
+  provider: z.enum(REQUESTABLE_EXTRACTION_PROVIDERS).optional()
 });
 
 export const documentMetadataPatchSchema = z.object({

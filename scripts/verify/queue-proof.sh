@@ -23,7 +23,7 @@ export JWT_SECRET="${JWT_SECRET:-replace-this-local-only}"
 export PASSWORD_PEPPER="${PASSWORD_PEPPER:-replace-this-local-only}"
 export STORAGE_DRIVER="${STORAGE_DRIVER:-filesystem}"
 export STORAGE_FILESYSTEM_ROOT="${STORAGE_FILESYSTEM_ROOT:-/data/balance-storage}"
-export OCR_PROVIDER="${OCR_PROVIDER:-textract}"
+export OCR_PROVIDER="${OCR_PROVIDER:-paddleocr}"
 
 compose() {
   docker compose -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" "$@"

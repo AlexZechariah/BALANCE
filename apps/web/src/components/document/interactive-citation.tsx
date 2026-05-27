@@ -70,7 +70,7 @@ export function CitationProvider({ children }: { children: ReactNode }) {
 
 /**
  * Displays citation metadata for a field — page number and
- * geometry mapping info from Textract.
+ * geometry mapping info from OCR providers.
  */
 export function CitationMetadata({
   pageNumber,

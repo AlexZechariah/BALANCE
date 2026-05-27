@@ -45,7 +45,7 @@ services:
       STORAGE_DRIVER: s3
       S3_BUCKET: ${S3_BUCKET:?S3_BUCKET is required}
       S3_REGION: ${S3_REGION:?S3_REGION is required}
-      OCR_PROVIDER: textract
+      OCR_PROVIDER: ${OCR_PROVIDER:-paddleocr}
       AWS_REGION: ${AWS_REGION:?AWS_REGION is required}
     depends_on:
       redis:
@@ -69,10 +69,10 @@ services:
       APP_NAME: ${APP_NAME:-Balance}
       PRODUCT_NAME: ${PRODUCT_NAME:-Balance}
       PROJECT_SLUG: ${PROJECT_SLUG:-balance}
-      DEPLOYMENT_NAMESPACE: ${DEPLOYMENT_NAMESPACE:-swe40006-project}
+      DEPLOYMENT_NAMESPACE: ${DEPLOYMENT_NAMESPACE:-balance}
       APP_ENV: production
       NODE_ENV: ${NODE_ENV:-production}
-      APP_VERSION: ${APP_VERSION:-0.4.1}
+      APP_VERSION: ${APP_VERSION:-0.5.0}
       GIT_COMMIT: ${GIT_COMMIT:-production}
       BUILD_ID: ${BUILD_ID:-production-build}
       API_PORT: 3001
@@ -80,8 +80,9 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       QUEUE_PROOF_NAME: ${QUEUE_PROOF_NAME:-queue_proof}
       EXTRACTION_QUEUE_NAME: ${EXTRACTION_QUEUE_NAME:-document_extract}
-      OCR_PROVIDER: textract
-      EXTRACTION_PROVIDER_DEFAULT: textract
+      OCR_PROVIDER: ${OCR_PROVIDER:-paddleocr}
+      EXTRACTION_PROVIDER_DEFAULT: ${EXTRACTION_PROVIDER_DEFAULT:-paddleocr}
+      EXTRACTION_ALLOW_LEGACY_TEXTRACT: ${EXTRACTION_ALLOW_LEGACY_TEXTRACT:-false}
       STORAGE_DRIVER: s3
       S3_BUCKET: ${S3_BUCKET:?S3_BUCKET is required}
       S3_REGION: ${S3_REGION:?S3_REGION is required}
@@ -115,10 +116,10 @@ services:
       APP_NAME: ${APP_NAME:-Balance}
       PRODUCT_NAME: ${PRODUCT_NAME:-Balance}
       PROJECT_SLUG: ${PROJECT_SLUG:-balance}
-      DEPLOYMENT_NAMESPACE: ${DEPLOYMENT_NAMESPACE:-swe40006-project}
+      DEPLOYMENT_NAMESPACE: ${DEPLOYMENT_NAMESPACE:-balance}
       APP_ENV: production
       NODE_ENV: ${NODE_ENV:-production}
-      APP_VERSION: ${APP_VERSION:-0.4.1}
+      APP_VERSION: ${APP_VERSION:-0.5.0}
       GIT_COMMIT: ${GIT_COMMIT:-production}
       BUILD_ID: ${BUILD_ID:-production-build}
       GH_PAT: ${GH_PAT:-}
@@ -137,7 +138,7 @@ services:
       - '80:3000'
     restart: unless-stopped
 
-  # ── Level 2: Observability ─────────────────────────────────────────────────
+  # ── Observability ──────────────────────────────────────────────────────────
 
   prometheus:
     image: prom/prometheus:v3.5.2

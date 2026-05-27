@@ -18,7 +18,7 @@
 # Optional environment variables (with defaults):
 #   POSTGRES_USER        Postgres user (default: balance)
 #   POSTGRES_DB          Postgres database name (default: balance)
-#   BACKUP_DIR           Backup output directory (default: /opt/swe40006-project/backups/<APP_ENV>)
+#   BACKUP_DIR           Backup output directory (default: /opt/balance/backups/<APP_ENV>)
 #   MIN_DUMP_SIZE        Minimum acceptable dump size in bytes (default: 100)
 
 set -euo pipefail
@@ -38,7 +38,7 @@ fi
 # ── Configurable defaults ───────────────────────────────────────────────────────
 POSTGRES_USER="${POSTGRES_USER:-balance}"
 POSTGRES_DB="${POSTGRES_DB:-balance}"
-BACKUP_DIR="${BACKUP_DIR:-/opt/swe40006-project/backups/${APP_ENV}}"
+BACKUP_DIR="${BACKUP_DIR:-/opt/balance/backups/${APP_ENV}}"
 MIN_DUMP_SIZE="${MIN_DUMP_SIZE:-100}"
 
 # ── Timestamped filename ────────────────────────────────────────────────────────

@@ -11,7 +11,7 @@
 #
 # Required environment variables:
 #   TARGET_REVISION  Git commit SHA, tag, or branch to roll back to
-#   APP_DIR          Application directory (default: /opt/swe40006-project)
+#   APP_DIR          Application directory (default: /opt/balance)
 #
 # Rollback-only environment variables (set by rollback.sh):
 #   DEPLOY_TOOLS_DIR  Directory containing preserved deployment tools
@@ -24,7 +24,7 @@ set -euo pipefail
 log_prefix='[rollback]'
 
 # ── Validate TARGET_REVISION ────────────────────────────────────
-APP_DIR="${APP_DIR:-/opt/swe40006-project}"
+APP_DIR="${APP_DIR:-/opt/balance}"
 : "${TARGET_REVISION:?${log_prefix} TARGET_REVISION is required}"
 
 case "$TARGET_REVISION" in
@@ -44,7 +44,7 @@ fi
 
 # ── Create rollback tools directory ──────────────────────────────
 PID=$$
-ROLLBACK_TOOLS_DIR="/tmp/swe40006-rollback-tools-${PID}"
+ROLLBACK_TOOLS_DIR="/tmp/balance-rollback-tools-${PID}"
 install -d -m 0755 "$ROLLBACK_TOOLS_DIR/scripts/deploy" "$ROLLBACK_TOOLS_DIR/scripts/backup"
 
 # ── Preserve current hardened deployment tools ──────────────────

@@ -1,5 +1,9 @@
 export type AppEnvironment = 'local' | 'staging' | 'production';
-export type StorageDriver = 'filesystem' | 's3';
+export type StorageDriver = 'filesystem' | 's3Compatible' | 'legacy_s3' | 's3';
+export type DatabaseStorageDriver = 'filesystem' | 's3' | 's3Compatible';
+
+export const OBJECT_STORAGE_PROVIDERS = ['filesystem', 's3Compatible'] as const;
+export type ObjectStorageProviderName = (typeof OBJECT_STORAGE_PROVIDERS)[number];
 
 export const USER_ROLES = ['consumer', 'reviewer', 'staff', 'admin', 'system_admin'] as const;
 export type UserRole = (typeof USER_ROLES)[number];
@@ -30,8 +34,11 @@ export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
 export const ENTITY_TYPES = ['document', 'extraction_job', 'claim', 'review', 'budget'] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
-export const EXTRACTION_PROVIDERS = ['textract'] as const;
-export type ExtractionProvider = (typeof EXTRACTION_PROVIDERS)[number];
+export const EXTRACTION_PROVIDERS = ['paddleocr', 'tesseract', 'manual'] as const;
+export const LEGACY_EXTRACTION_PROVIDERS = ['legacy_textract'] as const;
+export const REQUESTABLE_EXTRACTION_PROVIDERS = [...EXTRACTION_PROVIDERS, ...LEGACY_EXTRACTION_PROVIDERS] as const;
+export type ActiveExtractionProvider = (typeof EXTRACTION_PROVIDERS)[number];
+export type ExtractionProvider = (typeof REQUESTABLE_EXTRACTION_PROVIDERS)[number];
 
 export const BALANCE_CATEGORIES = [
   'restaurant',

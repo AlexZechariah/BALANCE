@@ -103,7 +103,7 @@ function AuditContent() {
 
       <div className="grid gap-3 md:grid-cols-4">
         <Metric label="Visible events" value={summary?.total ?? total} hint="Same access scope as the table" />
-        <Metric label="Failed extractions" value={summary?.failedExtractions ?? 0} hint="Textract failures in visible audit history" />
+        <Metric label="Failed extractions" value={summary?.failedExtractions ?? 0} hint="OCR failures in visible audit history" />
         <Metric label="Destructive changes" value={summary?.destructiveChanges ?? 0} hint="Deletes and irreversible admin actions" />
         <Metric label="Active actor roles" value={summary?.activeActorRoles ?? 0} hint="Distinct roles represented in events" />
       </div>

@@ -84,7 +84,7 @@ function DocumentsContent() {
   const categories = Array.from(new Set(documents.map((doc) => doc.category).filter(Boolean))) as string[];
 
   async function retry(id: string) {
-    await retryDocumentExtraction(id, 'textract');
+    await retryDocumentExtraction(id, 'paddleocr');
     const filters: Parameters<typeof listDocuments>[0] = {};
     if (search) filters.search = search;
     if (status !== 'all') filters.status = status;
@@ -182,7 +182,7 @@ function DocumentsContent() {
               selectedCount={Object.values(selected).filter(Boolean).length}
               onRetry={async () => {
                 const ids = Object.entries(selected).filter(([, v]) => v).map(([id]) => id);
-                await Promise.allSettled(ids.map((id) => retryDocumentExtraction(id, 'textract')));
+                await Promise.allSettled(ids.map((id) => retryDocumentExtraction(id, 'paddleocr')));
                 setSelected({});
                 const filters: Parameters<typeof listDocuments>[0] = {};
                 if (search) filters.search = search;
@@ -358,7 +358,7 @@ function BulkActionsToolbar({ selectedCount, onRetry, onDelete, onClear }: {
               Retry all
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Re-run AWS Textract extraction for all selected documents</TooltipContent>
+          <TooltipContent>Re-run open-source OCR extraction for all selected documents</TooltipContent>
         </Tooltip>
       </TooltipProvider>
       <TooltipProvider>
@@ -390,7 +390,7 @@ function RowActions({ doc, onRetry, onDelete }: { doc: DocumentSummary; onRetry:
         {!['queued', 'processing', 'submitted', 'reviewed'].includes(doc.status) && (
           <DropdownMenuItem onClick={onRetry}>
             <RefreshCcw className="size-4" />
-            Retry Textract
+            Retry OCR
           </DropdownMenuItem>
         )}
         {!['submitted', 'reviewed'].includes(doc.status) && (

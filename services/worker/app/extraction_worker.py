@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+"""Legacy AWS Textract worker retained disabled for historical compatibility.
+
+The active v0.5 queue entrypoint is app.open_ocr_worker.process_extraction.
+"""
+
 import datetime
 import hashlib
 import json
