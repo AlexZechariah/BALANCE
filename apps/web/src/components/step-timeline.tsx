@@ -153,7 +153,7 @@ export function StepTimeline({ steps, variant = 'default' }: StepTimelineProps) 
                 </p>
               )}
 
-              {/* Description — shown only on completed / current steps */}
+              {/* Description shown only on completed or current steps. */}
               {step.description &&
                 (step.status === 'completed' || step.status === 'current') && (
                   <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground/80">

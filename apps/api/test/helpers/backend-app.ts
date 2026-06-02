@@ -3,12 +3,16 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Test } from '@nestjs/testing';
 import { PrismaClient, Role, type DocumentStatus } from '@balance/db';
+import { loadAppConfig } from '@balance/config';
 import { PrismaPg } from '@prisma/adapter-pg';
-import bcrypt from 'bcryptjs';
+import argon2 from 'argon2';
+import { Queue } from 'bullmq';
+import IORedis from 'ioredis';
 import request from 'supertest';
 
 import { AppModule } from '../../src/app.module';
 import { ContractHttpExceptionFilter } from '../../src/common/contract-http-exception.filter';
+import { configureApiSecurity } from '../../src/security/browser-security';
 
 export const seedUsers = {
   consumer: {
@@ -54,22 +58,55 @@ export type TestContext = {
   prisma: PrismaClient;
 };
 
+const TEST_QUEUE_PREFIX = 'balance-test-';
+const TEST_QUEUE_SUFFIX = process.env.BALANCE_TEST_QUEUE_SUFFIX ?? `${process.pid}`;
+
+function testQueueName(name: string): string {
+  return `${TEST_QUEUE_PREFIX}${name}-${TEST_QUEUE_SUFFIX}`;
+}
+
+function isGuardedTestQueueName(name: string | undefined): name is string {
+  return Boolean(name?.startsWith(TEST_QUEUE_PREFIX));
+}
+
 function ensureTestEnv() {
   process.env.APP_ENV ??= 'local';
   process.env.NODE_ENV ??= 'test';
   process.env.DATABASE_URL ??= 'postgresql://balance:balance@127.0.0.1:5433/balance?schema=public';
   process.env.REDIS_URL ??= 'redis://127.0.0.1:6379';
-  process.env.JWT_SECRET ??= 'ci-placeholder-only';
-  process.env.JWT_EXPIRES_IN ??= '1h';
-  process.env.PASSWORD_PEPPER ??= 'ci-placeholder-only';
   process.env.STORAGE_DRIVER ??= 'filesystem';
   process.env.STORAGE_FILESYSTEM_ROOT ??= '/tmp/balance-api-test-storage';
-  process.env.QUEUE_PROOF_NAME ??= 'queue_proof';
-  process.env.EXTRACTION_QUEUE_NAME ??= 'document_extract';
+  process.env.QUEUE_PROOF_NAME ??= testQueueName('queue-proof');
+  process.env.EXTRACTION_QUEUE_NAME ??= testQueueName('document-extract');
   process.env.OCR_PROVIDER ??= 'paddleocr';
   process.env.EXTRACTION_PROVIDER_DEFAULT ??= 'paddleocr';
   process.env.EXTRACTION_ALLOW_LEGACY_TEXTRACT ??= 'false';
   process.env.TESSERACT_LANG ??= 'eng';
+}
+
+async function obliterateGuardedTestQueue(name: string) {
+  const connection = new IORedis(process.env.REDIS_URL!, {
+    maxRetriesPerRequest: null
+  });
+  const queue = new Queue(name, { connection });
+
+  try {
+    await queue.obliterate({ force: true });
+  } finally {
+    await queue.close();
+    connection.disconnect();
+  }
+}
+
+async function cleanupGuardedTestQueues() {
+  const queueNames = Array.from(new Set([
+    process.env.QUEUE_PROOF_NAME,
+    process.env.EXTRACTION_QUEUE_NAME
+  ].filter(isGuardedTestQueueName)));
+
+  for (const queueName of queueNames) {
+    await obliterateGuardedTestQueue(queueName);
+  }
 }
 
 function createPrismaClient(): PrismaClient {
@@ -97,8 +134,33 @@ async function writeTestStorageObject(storageKey: string, contentType: string) {
   await writeFile(target, body);
 }
 
-function peppered(password: string): string {
-  return `${password}${process.env.PASSWORD_PEPPER || ''}`;
+async function hashPassword(password: string): Promise<string> {
+  return argon2.hash(password, {
+    type: argon2.argon2id,
+    memoryCost: 65536,
+    timeCost: 3,
+    parallelism: 4
+  });
+}
+
+export type TestAuthSession = {
+  cookieHeader: string;
+  csrfToken: string;
+};
+
+export function sessionFromResponse(response: request.Response): TestAuthSession {
+  const setCookieHeader = response.headers['set-cookie'];
+  const cookies = (Array.isArray(setCookieHeader) ? setCookieHeader : setCookieHeader ? [setCookieHeader] : [])
+    .map((cookie) => cookie.split(';', 1)[0])
+    .filter(Boolean);
+  const csrfToken = response.body.csrfToken as string | undefined;
+  if (!cookies.length || !csrfToken) {
+    throw new Error('Authenticated response did not include session cookies and CSRF token');
+  }
+  return {
+    cookieHeader: cookies.join('; '),
+    csrfToken
+  };
 }
 
 export async function createTestContext(): Promise<TestContext> {
@@ -110,6 +172,7 @@ export async function createTestContext(): Promise<TestContext> {
   }).compile();
 
   const app = moduleRef.createNestApplication();
+  configureApiSecurity(app, loadAppConfig());
   app.useGlobalFilters(new ContractHttpExceptionFilter());
   await app.init();
 
@@ -118,6 +181,7 @@ export async function createTestContext(): Promise<TestContext> {
 
 export async function closeTestContext(ctx: TestContext) {
   await ctx.app.close();
+  await cleanupGuardedTestQueues();
   await ctx.prisma.$disconnect();
 }
 
@@ -136,14 +200,16 @@ export async function ensureSeedUsers(prisma: PrismaClient) {
         displayName: user.displayName,
         role: user.role,
         organizationId,
-        passwordHash: await bcrypt.hash(peppered(user.password), 10)
+        emailVerifiedAt: new Date(),
+        passwordHash: await hashPassword(user.password)
       },
       create: {
         email: user.email,
         displayName: user.displayName,
         role: user.role,
         organizationId,
-        passwordHash: await bcrypt.hash(peppered(user.password), 10)
+        emailVerifiedAt: new Date(),
+        passwordHash: await hashPassword(user.password)
       }
     });
   }
@@ -168,13 +234,16 @@ export async function login(app: INestApplication, key: keyof typeof seedUsers) 
 
   return {
     response,
-    token: response.body.accessToken as string,
-    user: response.body.user as { id: string; email: string; role: string; displayName: string; organizationId: string | null }
+    session: sessionFromResponse(response),
+    user: response.body.user as { id: string; email: string; role: string; displayName: string; organizationId: string | null; emailVerifiedAt: string | null }
   };
 }
 
-export function auth(token: string) {
-  return `Bearer ${token}`;
+export function auth(session: TestAuthSession) {
+  return (test: request.Test) => {
+    test.set('Cookie', session.cookieHeader);
+    test.set('x-csrf-token', session.csrfToken);
+  };
 }
 
 export async function createDocument(

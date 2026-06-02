@@ -8,6 +8,9 @@ import {
   BALANCE_CATEGORIES,
   CONSUMER_RECORD_TYPES,
   ENTERPRISE_CLAIM_INTENTS,
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  blockedPasswordValue,
   normalizeBalanceCategoryValue,
   type ClaimStatus,
   type DocumentStatus,
@@ -41,26 +44,25 @@ const monthKeySchema = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Month must u
 
 const passwordSchema = z
   .string()
-  .min(8, 'Password must be at least 8 characters')
-  .max(128, 'Password must not exceed 128 characters')
-  .refine((val) => /[A-Z]/.test(val), 'Must contain an uppercase letter')
-  .refine((val) => /[a-z]/.test(val), 'Must contain a lowercase letter')
-  .refine((val) => /[0-9]/.test(val), 'Must contain a digit')
-  .refine((val) => /[^A-Za-z0-9]/.test(val), 'Must contain a special character');
+  .min(PASSWORD_MIN_LENGTH, `Password must be at least ${PASSWORD_MIN_LENGTH} characters`)
+  .max(PASSWORD_MAX_LENGTH, `Password must not exceed ${PASSWORD_MAX_LENGTH} characters`)
+  .refine((val) => !blockedPasswordValue(val), 'Password is too common');
 
-export const loginRequestSchema = z.object({
+const strictObject = <T extends z.ZodRawShape>(shape: T) => z.object(shape).strict();
+
+export const loginRequestSchema = strictObject({
   email: z.string().email(),
   password: z.string().min(1)
 });
 
-export const registerRequestSchema = z.object({
+export const registerRequestSchema = strictObject({
   email: z.string().email('Invalid email address'),
   password: passwordSchema,
   displayName: z.string().trim().min(1, 'Display name is required').max(100, 'Display name must not exceed 100 characters'),
   orgName: z.string().trim().min(1, 'Organization name is required').max(100).optional(),
 });
 
-export const documentUploadMetadataSchema = z.object({
+export const documentUploadMetadataSchema = strictObject({
   label: z.string().trim().min(1, 'Label is required').max(120, 'Label must not exceed 120 characters'),
   notes: optionalNullableTrimmedString,
   documentType: z.enum(CONSUMER_RECORD_TYPES).optional(),
@@ -81,10 +83,10 @@ export const documentListQuerySchema = z.object({
   maxAmount: z.coerce.number().int().min(0).optional()
 });
 
-export const correctionPayloadSchema = z.object({
+export const correctionPayloadSchema = strictObject({
   fields: z
     .array(
-      z.object({
+      strictObject({
         id: z.string().uuid().optional(),
         name: z.enum(FIELD_NAMES),
         correctedValue: z.string().nullable()
@@ -93,11 +95,11 @@ export const correctionPayloadSchema = z.object({
     .min(1)
 });
 
-export const extractionRetrySchema = z.object({
+export const extractionRetrySchema = strictObject({
   provider: z.enum(REQUESTABLE_EXTRACTION_PROVIDERS).optional()
 });
 
-export const documentMetadataPatchSchema = z.object({
+export const documentMetadataPatchSchema = strictObject({
   label: z.string().trim().min(1, 'Label is required').max(120, 'Label must not exceed 120 characters').nullable().optional(),
   notes: optionalNullableTrimmedString,
   category: optionalNullableCategorySchema,
@@ -106,7 +108,7 @@ export const documentMetadataPatchSchema = z.object({
   retentionUntil: z.string().datetime().nullable().optional()
 });
 
-export const claimSubmissionPayloadSchema = z.object({
+export const claimSubmissionPayloadSchema = strictObject({
   documentId: z.string().uuid(),
   purpose: z.string().min(1),
   note: optionalTrimmedString
@@ -124,11 +126,11 @@ export const reviewQueueQuerySchema = z.object({
   status: z.enum(REVIEW_STATUSES).optional()
 });
 
-export const reviewApprovePayloadSchema = z.object({
+export const reviewApprovePayloadSchema = strictObject({
   note: optionalTrimmedString
 });
 
-export const reviewRejectPayloadSchema = z.object({
+export const reviewRejectPayloadSchema = strictObject({
   note: z.string().trim().min(1)
 });
 
@@ -146,7 +148,7 @@ export const auditQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).optional()
 });
 
-export const accountUpdateRequestSchema = z.object({
+export const accountUpdateRequestSchema = strictObject({
   displayName: z.string().trim().min(1, 'Display name is required').max(100, 'Display name must not exceed 100 characters').optional(),
   email: z.string().email('Invalid email address').optional(),
   currentPassword: z.string().min(1, 'Current password is required').optional(),
@@ -161,14 +163,31 @@ export const accountUpdateRequestSchema = z.object({
   }
 });
 
-export const budgetCreateRequestSchema = z.object({
+export const passwordResetRequestSchema = strictObject({
+  email: z.string().email('Invalid email address')
+});
+
+export const passwordResetConfirmRequestSchema = strictObject({
+  token: z.string().min(20, 'Reset token is required'),
+  password: passwordSchema
+});
+
+export const emailVerificationRequestSchema = strictObject({
+  email: z.string().email('Invalid email address')
+});
+
+export const emailVerificationConfirmRequestSchema = strictObject({
+  token: z.string().min(20, 'Verification token is required')
+});
+
+export const budgetCreateRequestSchema = strictObject({
   category: categorySchema,
   amountMinor: z.coerce.number().int().min(0, 'Budget amount must be zero or greater').max(100_000_000, 'Budget amount is too large'),
   month: monthKeySchema.optional(),
   currency: z.string().trim().length(3).optional()
 });
 
-export const budgetUpdateRequestSchema = z.object({
+export const budgetUpdateRequestSchema = strictObject({
   category: categorySchema.optional(),
   amountMinor: z.coerce.number().int().min(0, 'Budget amount must be zero or greater').max(100_000_000, 'Budget amount is too large').optional(),
   currency: z.string().trim().length(3).optional()
@@ -189,9 +208,13 @@ export type ReviewQueueQuery = z.infer<typeof reviewQueueQuerySchema> & { status
 export type ReviewApprovePayload = z.infer<typeof reviewApprovePayloadSchema>;
 export type ReviewRejectPayload = z.infer<typeof reviewRejectPayloadSchema>;
 export type AccountUpdateRequest = z.infer<typeof accountUpdateRequestSchema>;
+export type PasswordResetRequest = z.infer<typeof passwordResetRequestSchema>;
+export type PasswordResetConfirmRequest = z.infer<typeof passwordResetConfirmRequestSchema>;
+export type EmailVerificationRequest = z.infer<typeof emailVerificationRequestSchema>;
+export type EmailVerificationConfirmRequest = z.infer<typeof emailVerificationConfirmRequestSchema>;
 export type BudgetCreateRequest = z.infer<typeof budgetCreateRequestSchema>;
 export type BudgetUpdateRequest = z.infer<typeof budgetUpdateRequestSchema>;
-export const createMemberRequestSchema = z.object({
+export const createMemberRequestSchema = strictObject({
   email: z.string().email('Invalid email address'),
   password: passwordSchema,
   displayName: z.string().trim().min(1, 'Display name is required').max(100, 'Display name must not exceed 100 characters'),
@@ -201,13 +224,13 @@ export const createMemberRequestSchema = z.object({
 export type AuditQuery = z.infer<typeof auditQuerySchema>;
 export type CreateMemberRequest = z.infer<typeof createMemberRequestSchema>;
 
-export const updateMemberRoleRequestSchema = z.object({
+export const updateMemberRoleRequestSchema = strictObject({
   role: z.enum(['staff', 'reviewer', 'admin']),
 });
 
 export type UpdateMemberRoleRequest = z.infer<typeof updateMemberRoleRequestSchema>;
 
-export const updateMemberRequestSchema = z.object({
+export const updateMemberRequestSchema = strictObject({
   displayName: z.string().trim().min(1, 'Display name is required').max(100, 'Display name must not exceed 100 characters').optional(),
   email: z.string().email('Invalid email address').optional(),
   role: z.enum(['staff', 'reviewer', 'admin']).optional(),
@@ -215,7 +238,7 @@ export const updateMemberRequestSchema = z.object({
   message: 'At least one member field is required'
 });
 
-export const resetMemberPasswordRequestSchema = z.object({
+export const resetMemberPasswordRequestSchema = strictObject({
   password: passwordSchema,
 });
 

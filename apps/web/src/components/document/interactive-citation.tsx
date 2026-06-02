@@ -4,7 +4,7 @@ import { createContext, useContext, useState, useCallback, type ReactNode } from
 import { FileSearch, MapPin } from 'lucide-react';
 
 /**
- * Context for interactive citations — linking document fields to their
+ * Context for interactive citations, linking document fields to their
  * source location in the document preview.
  */
 interface CitationContextValue {
@@ -69,7 +69,7 @@ export function CitationProvider({ children }: { children: ReactNode }) {
 }
 
 /**
- * Displays citation metadata for a field — page number and
+ * Displays citation metadata for a field, including page number and
  * geometry mapping info from OCR providers.
  */
 export function CitationMetadata({

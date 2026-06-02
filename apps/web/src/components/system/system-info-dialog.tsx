@@ -59,7 +59,7 @@ export function SystemInfoDialog({ status, onClose }: SystemInfoDialogProps) {
     },
     {
       label: 'Last checked',
-      value: <span className="text-sm">{status.lastCheckedAt ? new Date(status.lastCheckedAt).toLocaleString() : '—'}</span>,
+      value: <span className="text-sm">{status.lastCheckedAt ? new Date(status.lastCheckedAt).toLocaleString() : '-'}</span>,
     },
   ];
 

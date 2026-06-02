@@ -173,6 +173,12 @@ enum EntityType {
   claim
   review
   budget
+  security_event
+}
+
+enum AuthTokenPurpose {
+  password_reset
+  email_verification
 }
 
 model User {
@@ -182,18 +188,58 @@ model User {
   displayName  String
   role         Role
   organizationId String? @db.Uuid
+  emailVerifiedAt DateTime?
 
   documents  Document[]   @relation("UserDocuments")
   claims     Claim[]      @relation("UserClaims")
   reviews    Review[]     @relation("UserReviews")
   budgets    Budget[]     @relation("UserBudgets")
   auditEvents AuditEvent[] @relation("UserAuditEvents")
+  authSessions AuthSession[] @relation("UserAuthSessions")
+  authAccountTokens AuthAccountToken[] @relation("UserAuthAccountTokens")
   organization Organization? @relation("OrgMembers", fields: [organizationId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([organizationId])
+}
+
+model AuthSession {
+  id            String    @id @default(uuid()) @db.Uuid
+  userId        String    @db.Uuid
+  tokenHash     String    @unique
+  csrfTokenHash String
+  expiresAt     DateTime
+  revokedAt     DateTime?
+
+  user User @relation("UserAuthSessions", fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([revokedAt])
+}
+
+model AuthAccountToken {
+  id         String           @id @default(uuid()) @db.Uuid
+  userId     String           @db.Uuid
+  purpose    AuthTokenPurpose
+  tokenHash  String           @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+
+  user User @relation("UserAuthAccountTokens", fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([purpose])
+  @@index([expiresAt])
+  @@index([consumedAt])
 }
 
 model Organization {

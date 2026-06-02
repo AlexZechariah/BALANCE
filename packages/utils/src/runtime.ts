@@ -5,11 +5,15 @@ const allowedEnvironments = new Set<AppEnvironment>(['local', 'staging', 'produc
 export function normalizeEnvironment(value: string | undefined): AppEnvironment {
   const normalized = value?.trim().toLowerCase();
 
-  if (normalized && allowedEnvironments.has(normalized as AppEnvironment)) {
+  if (!normalized) {
+    return 'local';
+  }
+
+  if (allowedEnvironments.has(normalized as AppEnvironment)) {
     return normalized as AppEnvironment;
   }
 
-  return 'local';
+  throw new Error(`Unsupported application environment: ${value}`);
 }
 
 export function parsePort(value: string | undefined, fallback: number): number {

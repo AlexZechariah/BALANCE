@@ -1,0 +1,309 @@
+groups:
+  - name: balance-core
+    rules:
+      - record: balance_api:http_requests:rate5m
+        expr: sum(rate(balance_api_http_requests_total[5m])) by (status_class)
+        labels:
+          service: api
+
+      - record: balance_api:http_request_duration:p95_5m
+        expr: histogram_quantile(0.95, sum(rate(balance_api_http_request_duration_seconds_bucket[5m])) by (le))
+        labels:
+          service: api
+
+      - record: balance_api:http_5xx_rate:5m
+        expr: sum(rate(balance_api_http_requests_total{status_class="5xx"}[5m]))
+        labels:
+          service: api
+
+      - record: balance_auth:failure_rate:5m
+        expr: sum(rate(balance_api_auth_failures_total{reason!="csrf"}[5m]))
+        labels:
+          service: api
+
+      - record: balance_auth:csrf_failure_rate:5m
+        expr: sum(rate(balance_api_auth_failures_total{reason="csrf"}[5m]))
+        labels:
+          service: api
+
+      - record: balance_rate_limit:denial_rate:5m
+        expr: sum(rate(balance_api_rate_limits_total[5m]))
+        labels:
+          service: api
+
+      - record: balance_upload:rejection_rate:5m
+        expr: sum(rate(balance_api_uploads_total{outcome="rejected"}[5m]))
+        labels:
+          service: upload
+
+      - record: balance_queue:wait_seconds:p95_5m
+        expr: histogram_quantile(0.95, sum(rate(balance_worker_queue_wait_seconds_bucket[5m])) by (le))
+        labels:
+          service: queue
+
+      - record: balance_queue:jobs:failure_rate5m
+        expr: sum(rate(balance_worker_queue_jobs_total{result="failure"}[5m]))
+        labels:
+          service: queue
+
+      - record: balance_worker:job_duration:p95_5m
+        expr: histogram_quantile(0.95, sum(rate(balance_worker_queue_job_duration_seconds_bucket[5m])) by (le))
+        labels:
+          service: worker
+
+      - record: balance_worker:ocr_jobs:failure_rate15m
+        expr: sum(rate(balance_worker_ocr_jobs_total{result="failure"}[15m]))
+        labels:
+          service: worker
+
+      - record: balance_status:results:failure_rate5m
+        expr: sum(rate(gatus_results_total{success="false"}[5m]))
+        labels:
+          service: status
+
+      - alert: BalanceApiDown
+        expr: up{job="balance-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: api
+        annotations:
+          summary: Balance API is not reachable.
+          description: The internal API metrics target is down.
+          runbook_url: "docs/security/SECURITY.md#observability-runbook"
+          first_check: "Check service logs, Compose health, recent local changes, and dependent queue/storage health before changing thresholds."
+          severity_meaning: "critical requires immediate local intervention; warning requires same-day triage in local v0.6 proof."
+
+      - alert: BalanceApiReadinessFailure
+        expr: sum(increase(balance_api_readiness_checks_total{outcome="error"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: Balance API readiness checks are failing.
+          description: One or more internal API dependency readiness checks reported errors.
+          runbook_url: "docs/security/SECURITY.md#observability-runbook"
+          first_check: "Check service logs, Compose health, recent local changes, and dependent queue/storage health before changing thresholds."
+          severity_meaning: "critical requires immediate local intervention; warning requires same-day triage in local v0.6 proof."
+
+      - alert: BalanceWorkerDown
+        expr: up{job="balance-worker"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: worker
+        annotations:
+          summary: Balance worker is not reachable.
+          description: The internal worker metrics target is down.
+          runbook_url: "docs/security/SECURITY.md#observability-runbook"
+          first_check: "Check service logs, Compose health, recent local changes, and dependent queue/storage health before changing thresholds."
+          severity_meaning: "critical requires immediate local intervention; warning requires same-day triage in local v0.6 proof."
+
+      - alert: BalanceWorkerReadinessFailure
+        expr: balance_worker_process_health == 0
+        for: 2m
+        labels:
+          severity: warning
+          service: worker
+        annotations:
+          summary: Balance worker readiness is degraded.
+          description: The worker health gauge reports that the worker is not accepting work.
+          runbook_url: "docs/security/SECURITY.md#observability-runbook"
+          first_check: "Check service logs, Compose health, recent local changes, and dependent queue/storage health before changing thresholds."
+          severity_meaning: "critical requires immediate local intervention; warning requires same-day triage in local v0.6 proof."
+
+      - alert: BalanceWebDown
+        expr: up{job="balance-web"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: web
+        annotations:
+          summary: Balance web is not reachable.
+          description: The internal web metrics target is down.
+          runbook_url: "docs/security/SECURITY.md#observability-runbook"
+          first_check: "Check service logs, Compose health, recent local changes, and dependent queue/storage health before changing thresholds."
+          severity_meaning: "critical requires immediate local intervention; warning requires same-day triage in local v0.6 proof."
+
+      - alert: BalanceStatusDown
+        expr: up{job="balance-gatus"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: status
+        annotations:
+          summary: Balance status monitor is not reachable.
+          description: Gatus metrics are unavailable.
+          runbook_url: "docs/security/SECURITY.md#observability-runbook"
+          first_check: "Check service logs, Compose health, recent local changes, and dependent queue/storage health before changing thresholds."
+          severity_meaning: "critical requires immediate local intervention; warning requires same-day triage in local v0.6 proof."
+
+      - alert: BalanceStatusEndpointDegraded
+        expr: sum(increase(gatus_results_total{success="false"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+          service: status
+        annotations:
+          summary: Balance status endpoint is degraded.
+          description: Gatus reported one or more failed checks using public-safe endpoint labels.
+          runbook_url: "docs/security/SECURITY.md#observability-runbook"
+          first_check: "Check service logs, Compose health, recent local changes, and dependent queue/storage health before changing thresholds."
+          severity_meaning: "critical requires immediate local intervention; warning requires same-day triage in local v0.6 proof."
+
+      - alert: BalancePostgresExporterDown
+        expr: up{job="balance-postgres"} == 0
+        for: 2m
+        labels:
+          severity: warning
+          service: postgres
+        annotations:
+          summary: Balance Postgres exporter is not reachable.
+          description: Database exporter telemetry is unavailable.
+          runbook_url: "docs/security/SECURITY.md#observability-runbook"
+          first_check: "Check service logs, Compose health, recent local changes, and dependent queue/storage health before changing thresholds."
+          severity_meaning: "critical requires immediate local intervention; warning requires same-day triage in local v0.6 proof."
+
+      - alert: BalancePostgresDown
+        expr: pg_up == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: postgres
+        annotations:
+          summary: Balance Postgres is not responding to exporter probes.
+          description: The Postgres exporter reports that the database is down.
+          runbook_url: "docs/security/SECURITY.md#observability-runbook"
+          first_check: "Check service logs, Compose health, recent local changes, and dependent queue/storage health before changing thresholds."
+          severity_meaning: "critical requires immediate local intervention; warning requires same-day triage in local v0.6 proof."
+
+      - alert: BalanceRedisExporterDown
+        expr: up{job="balance-redis"} == 0
+        for: 2m
+        labels:
+          severity: warning
+          service: redis
+        annotations:
+          summary: Balance Redis exporter is not reachable.
+          description: Queue/cache exporter telemetry is unavailable.
+          runbook_url: "docs/security/SECURITY.md#observability-runbook"
+          first_check: "Check service logs, Compose health, recent local changes, and dependent queue/storage health before changing thresholds."
+          severity_meaning: "critical requires immediate local intervention; warning requires same-day triage in local v0.6 proof."
+
+      - alert: BalanceRedisDown
+        expr: redis_up == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: redis
+        annotations:
+          summary: Balance Redis is not responding to exporter probes.
+          description: The Redis exporter reports that Redis is down.
+          runbook_url: "docs/security/SECURITY.md#observability-runbook"
+          first_check: "Check service logs, Compose health, recent local changes, and dependent queue/storage health before changing thresholds."
+          severity_meaning: "critical requires immediate local intervention; warning requires same-day triage in local v0.6 proof."
+
+      - alert: BalanceHighApi5xxRate
+        expr: balance_api:http_5xx_rate:5m > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: Balance API 5xx rate is elevated.
+          description: Internal API 5xx responses exceeded the local threshold.
+          runbook_url: "docs/security/SECURITY.md#observability-runbook"
+          first_check: "Check service logs, Compose health, recent local changes, and dependent queue/storage health before changing thresholds."
+          severity_meaning: "critical requires immediate local intervention; warning requires same-day triage in local v0.6 proof."
+
+      - alert: BalanceHighApiP95Latency
+        expr: balance_api:http_request_duration:p95_5m > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: Balance API p95 latency is elevated.
+          description: Internal API p95 request latency exceeded the local threshold.
+          runbook_url: "docs/security/SECURITY.md#observability-runbook"
+          first_check: "Check service logs, Compose health, recent local changes, and dependent queue/storage health before changing thresholds."
+          severity_meaning: "critical requires immediate local intervention; warning requires same-day triage in local v0.6 proof."
+
+      - alert: BalanceAuthOrRateLimitSpike
+        expr: (balance_auth:failure_rate:5m + balance_auth:csrf_failure_rate:5m + balance_rate_limit:denial_rate:5m) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: Balance auth or rate-limit denials are elevated.
+          description: Authentication, CSRF, or rate-limit denial signals exceeded the local threshold.
+          runbook_url: "docs/security/SECURITY.md#observability-runbook"
+          first_check: "Check service logs, Compose health, recent local changes, and dependent queue/storage health before changing thresholds."
+          severity_meaning: "critical requires immediate local intervention; warning requires same-day triage in local v0.6 proof."
+
+      - alert: BalanceUploadRejectionSpike
+        expr: balance_upload:rejection_rate:5m > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: upload
+        annotations:
+          summary: Balance upload rejections are elevated.
+          description: Upload validation rejections exceeded the local threshold.
+          runbook_url: "docs/security/SECURITY.md#observability-runbook"
+          first_check: "Check service logs, Compose health, recent local changes, and dependent queue/storage health before changing thresholds."
+          severity_meaning: "critical requires immediate local intervention; warning requires same-day triage in local v0.6 proof."
+
+      - alert: BalanceStorageFailures
+        expr: (sum(rate(balance_api_storage_operations_total{outcome="error"}[5m])) + sum(rate(balance_worker_storage_operations_total{result="failure"}[5m]))) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: storage
+        annotations:
+          summary: Balance storage operations are failing.
+          description: API or worker storage operation failures exceeded the local threshold.
+          runbook_url: "docs/security/SECURITY.md#observability-runbook"
+          first_check: "Check service logs, Compose health, recent local changes, and dependent queue/storage health before changing thresholds."
+          severity_meaning: "critical requires immediate local intervention; warning requires same-day triage in local v0.6 proof."
+
+      - alert: BalanceQueueWaitHigh
+        expr: balance_queue:wait_seconds:p95_5m > 120
+        for: 5m
+        labels:
+          severity: warning
+          service: queue
+        annotations:
+          summary: Balance extraction queue wait is elevated.
+          description: Worker queue wait p95 exceeded the local threshold.
+          runbook_url: "docs/security/SECURITY.md#observability-runbook"
+          first_check: "Check service logs, Compose health, recent local changes, and dependent queue/storage health before changing thresholds."
+          severity_meaning: "critical requires immediate local intervention; warning requires same-day triage in local v0.6 proof."
+
+      - alert: BalanceExtractionFailuresHigh
+        expr: balance_worker:ocr_jobs:failure_rate15m > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: worker
+        annotations:
+          summary: Balance extraction failures are elevated.
+          description: OCR provider failure signals exceeded the local threshold.
+          runbook_url: "docs/security/SECURITY.md#observability-runbook"
+          first_check: "Check service logs, Compose health, recent local changes, and dependent queue/storage health before changing thresholds."
+          severity_meaning: "critical requires immediate local intervention; warning requires same-day triage in local v0.6 proof."
+
+      - alert: BalanceObservabilityTargetDown
+        expr: up{job=~"balance-grafana|balance-loki|balance-tempo|balance-pyroscope|balance-alloy|balance-blackbox"} == 0
+        for: 3m
+        labels:
+          severity: warning
+          service: observability
+        annotations:
+          summary: Balance developer observability target is down.
+          description: One or more private observability scrape targets are unavailable.
+          runbook_url: "docs/security/SECURITY.md#observability-runbook"
+          first_check: "Check service logs, Compose health, recent local changes, and dependent queue/storage health before changing thresholds."
+          severity_meaning: "critical requires immediate local intervention; warning requires same-day triage in local v0.6 proof."

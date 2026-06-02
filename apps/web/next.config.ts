@@ -18,15 +18,35 @@ const allowedDevOrigins = [
 ];
 
 const nextConfig: NextConfig = {
+  output: 'standalone',
+  outputFileTracingRoot: path.resolve(__dirname, '../..'),
+  outputFileTracingIncludes: {
+    '/*': [
+      'node_modules/.pnpm/@pyroscope+nodejs@*/node_modules/@pyroscope/nodejs/**/*',
+      'node_modules/.pnpm/@datadog+pprof@*/node_modules/@datadog/pprof/**/*'
+    ]
+  },
+  serverExternalPackages: ['@pyroscope/nodejs', '@datadog/pprof'],
   turbopack: {
     root: path.resolve(__dirname, '../..')
   },
   allowedDevOrigins,
   transpilePackages: ['@balance/config', '@balance/types', '@balance/ui', '@balance/utils'],
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: [
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' }
+        ]
+      }
+    ];
+  },
   async rewrites() {
     return [
       {
-        source: `${apiBasePath}/:path*`,
+        source: `${apiBasePath}/:path((?!metrics$).*)`,
         destination: `${apiProxyTarget}/:path*`
       }
     ];

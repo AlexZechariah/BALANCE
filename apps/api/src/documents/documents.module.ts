@@ -9,11 +9,12 @@ import { StorageModule } from '../storage/storage.module';
 
 import { DocumentsController } from './documents.controller';
 import { DocumentsService } from './documents.service';
+import { UploadSecurityService } from './upload-security.service';
 
 @Module({
   imports: [PrismaModule, AuthModule, StorageModule, QueueModule, AuditModule, ExtractionModule],
   controllers: [DocumentsController],
-  providers: [DocumentsService],
+  providers: [DocumentsService, UploadSecurityService],
   exports: [DocumentsService]
 })
 export class DocumentsModule {}

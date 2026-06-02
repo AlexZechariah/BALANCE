@@ -1,4 +1,4 @@
-// Desktop API client — uses configurable API base URL from preload bridge.
+// Desktop API client uses the configurable API base URL from the preload bridge.
 // Never calls :3001 directly. Always goes through the public web origin + /api.
 
 export interface ApiError {
@@ -17,18 +17,16 @@ export class DesktopApiError extends Error {
   }
 }
 
-const TOKEN_KEY = 'balance.accessToken';
+const CSRF_HEADER = 'x-csrf-token';
 
-export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+let csrfTokenMemory: string | null = null;
+
+export function setCsrfToken(token: string | null | undefined): void {
+  csrfTokenMemory = token || null;
 }
 
-export function setToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token);
-}
-
-export function clearToken(): void {
-  localStorage.removeItem(TOKEN_KEY);
+export function clearCsrfToken(): void {
+  csrfTokenMemory = null;
 }
 
 async function getBaseUrl(): Promise<string> {
@@ -49,14 +47,15 @@ export async function desktopRequest<T>(
 ): Promise<T> {
   const base = await getBaseUrl();
   const url = `${base}${path}`;
-  const token = getToken();
+  const method = (options.method || 'GET').toUpperCase();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(csrfTokenMemory && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) ? { [CSRF_HEADER]: csrfTokenMemory } : {}),
   };
 
   const res = await fetch(url, {
     ...options,
+    credentials: 'include',
     headers: { ...headers, ...(options.headers ?? {}) },
   });
 
@@ -64,6 +63,8 @@ export async function desktopRequest<T>(
     const error = await parseError(res);
     throw new DesktopApiError(res.status, error);
   }
+
+  if (res.status === 204) return undefined as T;
 
   return res.json() as Promise<T>;
 }

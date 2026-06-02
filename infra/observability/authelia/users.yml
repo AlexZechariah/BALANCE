@@ -1,0 +1,10 @@
+# Balance Authelia file backend placeholder.
+# Replace this disabled user with local-only developer users before using the production profile.
+users:
+  balance_disabled_placeholder:
+    disabled: true
+    displayname: Balance Disabled Placeholder
+    password: "$argon2id$v=19$m=65536,t=3,p=4$E7xNTtiyGyEXrtGN+qd4Yg$VOb73XHl6Gxsm23K7VH1+fFwHTkzR0wNZpMRXltxiEw"
+    email: disabled-placeholder@localhost.localdomain
+    groups:
+      - balance-developers

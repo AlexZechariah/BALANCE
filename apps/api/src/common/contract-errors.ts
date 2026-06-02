@@ -17,9 +17,12 @@ export type ContractErrorBody = {
 export function makeContractErrorBody(
   code: string,
   message: string,
-  details: ContractErrorDetail[] = []
+  details: ContractErrorDetail[] = [],
+  requestId?: string
 ): ContractErrorBody {
-  return { error: { code, message, details } };
+  const error: ContractErrorBody['error'] = { code, message, details };
+  if (requestId) error.requestId = requestId;
+  return { error };
 }
 
 export function throwContractHttpError(
@@ -34,4 +37,3 @@ export function throwContractHttpError(
 export function throwValidationError(details: ContractErrorDetail[], status: number = HttpStatus.UNPROCESSABLE_ENTITY): never {
   throwContractHttpError(status, 'VALIDATION_ERROR', 'Request validation failed', details);
 }
-

@@ -18,10 +18,18 @@ import { AuthGuard, type AuthenticatedRequestUser } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
+import { RequireVerifiedEmailForRoles } from '../auth/verified-email.decorator';
+import { VerifiedEmailGuard } from '../auth/verified-email.guard';
+import { Actions } from '../authorization/actions';
+import { CheckPolicies } from '../authorization/policy.decorator';
+import { PolicyGuard } from '../authorization/policy.guard';
+import { Subjects } from '../authorization/subjects';
 import { throwValidationError } from '../common/contract-errors';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { BalanceRateLimit } from '../rate-limit/rate-limit.decorator';
 
 import { DocumentsService } from './documents.service';
+import { DOCUMENT_UPLOAD_LIMITS } from './upload-limits';
 
 type MulterFile = {
   originalname: string;
@@ -39,11 +47,13 @@ export class DocumentsController {
   constructor(@Inject(DocumentsService) private readonly documents: DocumentsService) {}
 
   @Post()
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('upload')
+  @UseGuards(AuthGuard, RolesGuard, PolicyGuard)
   @Roles('consumer', 'staff', 'admin')
+  @CheckPolicies((ability) => ability.can(Actions.create, Subjects.Document))
   @UseInterceptors(
     FileInterceptor('file', {
-      limits: { fileSize: 10 * 1024 * 1024 }
+      limits: { fileSize: DOCUMENT_UPLOAD_LIMITS.maxFileBytes }
     })
   )
   async upload(
@@ -73,8 +83,10 @@ export class DocumentsController {
   }
 
   @Get()
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('list')
+  @UseGuards(AuthGuard, RolesGuard, PolicyGuard)
   @Roles('consumer', 'staff', 'admin')
+  @CheckPolicies((ability) => ability.can(Actions.read, Subjects.Document))
   async list(
     @Query(new ZodValidationPipe(documentListQuerySchema)) query: DocumentListQuery,
     @CurrentUser() user: AuthenticatedRequestUser
@@ -114,23 +126,29 @@ export class DocumentsController {
   }
 
   @Get('insights')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('insights')
+  @UseGuards(AuthGuard, RolesGuard, PolicyGuard)
   @Roles('consumer', 'staff', 'admin')
+  @CheckPolicies((ability) => ability.can(Actions.read, Subjects.Document))
   async insights(@CurrentUser() user: AuthenticatedRequestUser) {
     return this.documents.insights({ ownerId: user.id });
   }
 
   @Get(':id')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('read')
+  @UseGuards(AuthGuard, RolesGuard, PolicyGuard)
   @Roles('consumer', 'reviewer', 'staff', 'admin', 'system_admin')
+  @CheckPolicies((ability) => ability.can(Actions.read, Subjects.Document))
   async detail(@Param('id') id: string, @CurrentUser() user: AuthenticatedRequestUser) {
     return this.documents.getById({ id, userId: user.id, role: user.role, organizationId: user.organizationId });
   }
 
   @Get(':id/preview')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('preview')
+  @UseGuards(AuthGuard, RolesGuard, PolicyGuard)
   @Roles('consumer', 'reviewer', 'staff', 'admin', 'system_admin')
-  @Header('Cache-Control', 'private, max-age=60')
+  @CheckPolicies((ability) => ability.can(Actions.preview, Subjects.StorageObject))
+  @Header('Cache-Control', 'private, no-store')
   async preview(@Param('id') id: string, @CurrentUser() user: AuthenticatedRequestUser) {
     const preview = await this.documents.preview({ id, userId: user.id, role: user.role, organizationId: user.organizationId });
     return new StreamableFile(preview.body, {
@@ -140,22 +158,29 @@ export class DocumentsController {
   }
 
   @Get(':id/timeline')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('read')
+  @UseGuards(AuthGuard, RolesGuard, PolicyGuard)
   @Roles('consumer', 'reviewer', 'staff', 'admin', 'system_admin')
+  @CheckPolicies((ability) => ability.can(Actions.read, Subjects.Document))
   async timeline(@Param('id') id: string, @CurrentUser() user: AuthenticatedRequestUser) {
     return this.documents.timeline({ id, userId: user.id, role: user.role, organizationId: user.organizationId });
   }
 
   @Get(':id/duplicates')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('list')
+  @UseGuards(AuthGuard, RolesGuard, PolicyGuard)
   @Roles('consumer', 'staff', 'admin')
+  @CheckPolicies((ability) => ability.can(Actions.read, Subjects.Document))
   async duplicates(@Param('id') id: string, @CurrentUser() user: AuthenticatedRequestUser) {
     return this.documents.duplicates({ id, userId: user.id });
   }
 
   @Patch(':id/metadata')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('sensitive')
+  @UseGuards(AuthGuard, RolesGuard, VerifiedEmailGuard, PolicyGuard)
   @Roles('consumer', 'staff', 'admin')
+  @RequireVerifiedEmailForRoles('admin', 'system_admin')
+  @CheckPolicies((ability) => ability.can(Actions.update, Subjects.Document))
   async updateMetadata(
     @Param('id') id: string,
     @Body(new ZodValidationPipe(documentMetadataPatchSchema)) body: DocumentMetadataPatch,
@@ -187,8 +212,11 @@ export class DocumentsController {
   }
 
   @Patch(':id/corrections')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('sensitive')
+  @UseGuards(AuthGuard, RolesGuard, VerifiedEmailGuard, PolicyGuard)
   @Roles('consumer', 'staff', 'admin')
+  @RequireVerifiedEmailForRoles('admin', 'system_admin')
+  @CheckPolicies((ability) => ability.can(Actions.update, Subjects.DocumentField))
   async corrections(
     @Param('id') id: string,
     @Body(new ZodValidationPipe(correctionPayloadSchema)) body: CorrectionPayload,
@@ -207,8 +235,11 @@ export class DocumentsController {
   }
 
   @Post(':id/extraction/retry')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('retry')
+  @UseGuards(AuthGuard, RolesGuard, VerifiedEmailGuard, PolicyGuard)
   @Roles('consumer', 'staff', 'admin')
+  @RequireVerifiedEmailForRoles('admin', 'system_admin')
+  @CheckPolicies((ability) => ability.can(Actions.retryExtraction, Subjects.ExtractionJob))
   async retryExtraction(
     @Param('id') id: string,
     @Body(new ZodValidationPipe(extractionRetrySchema)) body: ExtractionRetryPayload,
@@ -223,8 +254,11 @@ export class DocumentsController {
   }
 
   @Delete(':id')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('sensitive')
+  @UseGuards(AuthGuard, RolesGuard, VerifiedEmailGuard, PolicyGuard)
   @Roles('consumer', 'staff', 'admin', 'system_admin')
+  @RequireVerifiedEmailForRoles('admin', 'system_admin')
+  @CheckPolicies((ability) => ability.can(Actions.delete, Subjects.Document))
   @HttpCode(204)
   async deleteDocument(@Param('id') id: string, @CurrentUser() user: AuthenticatedRequestUser) {
     await this.documents.deleteDocument({
@@ -237,8 +271,11 @@ export class DocumentsController {
   }
 
   @Delete()
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('sensitive')
+  @UseGuards(AuthGuard, RolesGuard, VerifiedEmailGuard, PolicyGuard)
   @Roles('system_admin')
+  @RequireVerifiedEmailForRoles('admin', 'system_admin')
+  @CheckPolicies((ability) => ability.can(Actions.manage, 'all'))
   async deleteAllDocuments(@CurrentUser() user: AuthenticatedRequestUser) {
     return this.documents.deleteAllDocuments({
       userId: user.id,

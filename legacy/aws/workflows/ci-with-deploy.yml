@@ -1,0 +1,364 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: CI validation
+    runs-on: ubuntu-24.04
+    environment: staging
+    services:
+      postgres:
+        image: postgres:18.3
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+      redis:
+        image: redis:8.4.2
+        ports:
+          - 127.0.0.1:6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      APP_ENV: local
+      GRAFANA_ADMIN_PASSWORD: ci-placeholder-only
+      DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci?schema=public
+      POSTGRES_PASSWORD: ci-placeholder-only
+      REDIS_URL: redis://127.0.0.1:6379
+      JWT_SECRET: ci-placeholder-only
+      JWT_EXPIRES_IN: 1h
+      PASSWORD_PEPPER: ci-placeholder-only
+      STORAGE_DRIVER: filesystem
+      STORAGE_FILESYSTEM_ROOT: /tmp/balance-ci-storage
+      QUEUE_PROOF_NAME: queue_proof
+      EXTRACTION_QUEUE_NAME: document_extract
+      OCR_PROVIDER: paddleocr
+      SEED_CONSUMER_PASSWORD: ci-consumer-password
+      SEED_REVIEWER_PASSWORD: ci-reviewer-password
+      SEED_ADMIN_PASSWORD: ci-admin-password
+      APP_VERSION: ${{ vars.APP_VERSION || '0.5.0' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6.0.2
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6.0.5
+        with:
+          version: 10.33.1
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+
+      - name: Cache Turborepo data
+        uses: actions/cache@v5
+        with:
+          path: .turbo
+          key: ${{ runner.os }}-turbo-${{ hashFiles('pnpm-lock.yaml', 'turbo.json') }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prisma generate
+        run: pnpm prisma:generate
+
+      - name: Prisma migrate deploy
+        run: pnpm prisma:deploy
+
+      - name: Prisma seed
+        run: pnpm prisma:seed
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build worker Docker image
+        run: docker build -f services/worker/Dockerfile -t balance-worker:validation .
+
+      - name: Compile worker Python sources
+        run: docker run --rm balance-worker:validation python -m compileall app
+
+      - name: Build
+        run: pnpm build
+
+      - name: Validate local Compose file
+        run: docker compose -f infra/compose/compose.local.yml config
+
+      - name: Validate staging Compose file
+        if: ${{ vars.ENABLE_LEGACY_AWS_DEPLOY == 'true' }}
+        run: docker compose -f infra/compose/compose.staging.yml config
+
+      - name: Validate production Compose file
+        if: ${{ vars.ENABLE_LEGACY_AWS_DEPLOY == 'true' }}
+        run: docker compose -f infra/compose/compose.production.yml config
+
+      - name: Validate queue proof
+        run: bash scripts/verify/queue.sh
+
+      - name: Validate worker extraction proof
+        run: bash scripts/verify/extraction.sh
+
+  deploy-staging:
+    name: Deploy staging
+    needs: build-and-test
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && vars.ENABLE_LEGACY_AWS_DEPLOY == 'true' }}
+    permissions:
+      id-token: write
+      contents: read
+    runs-on: ubuntu-24.04
+    environment: staging
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: false
+
+    env:
+      SSM_REGION: ${{ vars.SSM_REGION }}
+      # Do not rely on AWS_REGION after aws-actions/configure-aws-credentials.
+      # That action exports AWS_REGION/AWS_DEFAULT_REGION for AWS CLI usage (SSM region),
+      # which can clobber the app runtime region. Use APP_AWS_REGION for the app.
+      APP_AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+      SSM_INSTANCE_ID: ${{ vars.SSM_INSTANCE_ID }}
+      S3_BUCKET: ${{ vars.S3_BUCKET }}
+      SSM_EXECUTION_TIMEOUT_SECONDS: '3600'
+      SSM_STATUS_POLL_SECONDS: '10'
+      APP_DIR: /opt/balance
+      APP_URL: ${{ secrets.STAGING_APP_URL }}
+      API_URL: ${{ secrets.STAGING_API_URL }}
+      DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+      POSTGRES_PASSWORD: ${{ secrets.STAGING_POSTGRES_PASSWORD }}
+      REDIS_URL: redis://redis:6379
+      GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+      JWT_SECRET: ${{ secrets.STAGING_JWT_SECRET }}
+      JWT_EXPIRES_IN: ${{ vars.JWT_EXPIRES_IN || '1h' }}
+      PASSWORD_PEPPER: ${{ secrets.STAGING_PASSWORD_PEPPER }}
+      STORAGE_DRIVER: s3
+      S3_REGION: ${{ vars.S3_REGION || vars.AWS_REGION }}
+      OCR_PROVIDER: paddleocr
+      QUEUE_PROOF_NAME: ${{ vars.QUEUE_PROOF_NAME || 'queue_proof' }}
+      EXTRACTION_QUEUE_NAME: ${{ vars.EXTRACTION_QUEUE_NAME || 'document_extract' }}
+      SEED_CONSUMER_PASSWORD: ${{ secrets.STAGING_SEED_CONSUMER_PASSWORD }}
+      SEED_REVIEWER_PASSWORD: ${{ secrets.STAGING_SEED_REVIEWER_PASSWORD }}
+      SEED_ADMIN_PASSWORD: ${{ secrets.STAGING_SEED_ADMIN_PASSWORD }}
+      GIT_COMMIT: ${{ github.sha }}
+      BUILD_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
+      APP_VERSION: ${{ vars.APP_VERSION || '0.5.0' }}
+      GH_PAT: ${{ secrets.GH_PAT }}
+      REPOSITORY_URL: https://github.com/AlexZechariah/BALANCE.git
+      COMPOSE_FILE: infra/compose/compose.staging.yml
+      APP_ENV: staging
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6.0.2
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.1.1
+        with:
+          aws-region: ${{ env.SSM_REGION }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+
+      - name: Read version from version.json
+        run: echo "APP_VERSION=$(node -p "require('./version.json').version")" >> $GITHUB_ENV
+
+      - name: Build staging SSM request payload
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json
+          import os
+          import pathlib
+          import shlex
+
+          def q(value: str) -> str:
+              return shlex.quote(value)
+
+          commands = [
+              'set -eu',
+              f"AWS_REGION={q(os.environ['APP_AWS_REGION'])}",
+              f"S3_BUCKET={q(os.environ['S3_BUCKET'])}",
+              f"APP_DIR={q(os.environ['APP_DIR'])}",
+              f"REPOSITORY_URL={q(os.environ['REPOSITORY_URL'])}",
+              f"COMPOSE_FILE={q(os.environ['COMPOSE_FILE'])}",
+              f"APP_ENV={q(os.environ['APP_ENV'])}",
+              f"GIT_COMMIT={q(os.environ['GIT_COMMIT'])}",
+              f"GITHUB_SHA={q(os.environ['GIT_COMMIT'])}",
+              f"BUILD_ID={q(os.environ['BUILD_ID'])}",
+              f"APP_VERSION={q(os.environ['APP_VERSION'])}",
+              f"GH_PAT={q(os.environ['GH_PAT'])}",
+              f"DATABASE_URL={q(os.environ['DATABASE_URL'])}",
+              f"POSTGRES_PASSWORD={q(os.environ['POSTGRES_PASSWORD'])}",
+              f"REDIS_URL={q(os.environ['REDIS_URL'])}",
+              f"GRAFANA_ADMIN_PASSWORD={q(os.environ['GRAFANA_ADMIN_PASSWORD'])}",
+              f"JWT_SECRET={q(os.environ['JWT_SECRET'])}",
+              f"JWT_EXPIRES_IN={q(os.environ['JWT_EXPIRES_IN'])}",
+              f"PASSWORD_PEPPER={q(os.environ['PASSWORD_PEPPER'])}",
+              f"STORAGE_DRIVER={q(os.environ['STORAGE_DRIVER'])}",
+              f"S3_REGION={q(os.environ['S3_REGION'])}",
+              f"OCR_PROVIDER={q(os.environ['OCR_PROVIDER'])}",
+              f"QUEUE_PROOF_NAME={q(os.environ['QUEUE_PROOF_NAME'])}",
+              f"EXTRACTION_QUEUE_NAME={q(os.environ['EXTRACTION_QUEUE_NAME'])}",
+              f"SEED_CONSUMER_PASSWORD={q(os.environ['SEED_CONSUMER_PASSWORD'])}",
+              f"SEED_REVIEWER_PASSWORD={q(os.environ['SEED_REVIEWER_PASSWORD'])}",
+              f"SEED_ADMIN_PASSWORD={q(os.environ['SEED_ADMIN_PASSWORD'])}",
+              'install -d -m 0755 "$APP_DIR"',
+              'chown -R ubuntu:ubuntu "$APP_DIR"',
+              'chmod 0755 "$APP_DIR"',
+              "sudo -H -u ubuntu env HOME=/home/ubuntu AWS_REGION=\"$AWS_REGION\" S3_BUCKET=\"$S3_BUCKET\" APP_DIR=\"$APP_DIR\" REPOSITORY_URL=\"$REPOSITORY_URL\" COMPOSE_FILE=\"$COMPOSE_FILE\" APP_ENV=\"$APP_ENV\" GIT_COMMIT=\"$GIT_COMMIT\" GITHUB_SHA=\"$GITHUB_SHA\" BUILD_ID=\"$BUILD_ID\" APP_VERSION=\"$APP_VERSION\" GH_PAT=\"$GH_PAT\" DATABASE_URL=\"$DATABASE_URL\" POSTGRES_PASSWORD=\"$POSTGRES_PASSWORD\" REDIS_URL=\"$REDIS_URL\" GRAFANA_ADMIN_PASSWORD=\"$GRAFANA_ADMIN_PASSWORD\" JWT_SECRET=\"$JWT_SECRET\" JWT_EXPIRES_IN=\"$JWT_EXPIRES_IN\" PASSWORD_PEPPER=\"$PASSWORD_PEPPER\" STORAGE_DRIVER=\"$STORAGE_DRIVER\" S3_REGION=\"$S3_REGION\" OCR_PROVIDER=\"$OCR_PROVIDER\" QUEUE_PROOF_NAME=\"$QUEUE_PROOF_NAME\" EXTRACTION_QUEUE_NAME=\"$EXTRACTION_QUEUE_NAME\" SEED_CONSUMER_PASSWORD=\"$SEED_CONSUMER_PASSWORD\" SEED_REVIEWER_PASSWORD=\"$SEED_REVIEWER_PASSWORD\" SEED_ADMIN_PASSWORD=\"$SEED_ADMIN_PASSWORD\" bash -lc 'set -euo pipefail; if [ ! -d \"$APP_DIR/.git\" ]; then git clone \"$REPOSITORY_URL\" \"$APP_DIR\"; fi; cd \"$APP_DIR\"; git remote set-url origin \"$REPOSITORY_URL\"; git fetch --prune origin develop; git checkout -B develop origin/develop; git reset --hard \"$GIT_COMMIT\"; cd \"$APP_DIR\"; bash scripts/deploy/ssm-deploy.sh'",
+          ]
+
+          request = {
+              "DocumentName": "AWS-RunShellScript",
+              "InstanceIds": [os.environ["SSM_INSTANCE_ID"]],
+              "Comment": f"Deploy staging {os.environ['GIT_COMMIT']}",
+              "Parameters": {
+                  "commands": commands,
+                  "executionTimeout": [os.environ["SSM_EXECUTION_TIMEOUT_SECONDS"]],
+              },
+          }
+
+          request_path = pathlib.Path(os.environ['RUNNER_TEMP']) / 'ssm-request.json'
+          request_path.write_text(json.dumps(request), encoding='utf-8')
+          PY
+
+      - name: Send staging deployment command
+        id: send-command
+        run: |
+          set -euo pipefail
+          COMMAND_ID="$({
+            aws ssm send-command \
+              --region "$SSM_REGION" \
+              --cli-input-json "file://$RUNNER_TEMP/ssm-request.json" \
+              --query 'Command.CommandId' \
+              --output text
+          })"
+
+          echo "COMMAND_ID=$COMMAND_ID" >> "$GITHUB_ENV"
+
+      - name: Wait for staging deployment completion
+        run: |
+          set -euo pipefail
+
+          poll_seconds="${SSM_STATUS_POLL_SECONDS:-10}"
+          timeout_seconds="${SSM_EXECUTION_TIMEOUT_SECONDS:?}"
+          started_at="$(date +%s)"
+          deadline="$((started_at + timeout_seconds))"
+
+          while true; do
+            status_output="$(aws ssm get-command-invocation --region "$SSM_REGION" --command-id "$COMMAND_ID" --instance-id "$SSM_INSTANCE_ID" --query 'Status' --output text 2>&1)"
+            status_rc=$?
+
+            if [ "$status_rc" -eq 0 ]; then
+              STATUS="$status_output"
+            elif printf '%s' "$status_output" | grep -q 'InvocationDoesNotExist'; then
+              STATUS=''
+            else
+              printf 'Failed to query SSM command status:\n%s\n' "$status_output" >&2
+              exit 1
+            fi
+
+            now="$(date +%s)"
+            elapsed="$((now - started_at))"
+            remaining="$((deadline - now))"
+
+            if [ "$remaining" -lt 0 ]; then
+              remaining=0
+            fi
+
+            printf 'SSM command status: %s (elapsed=%ss remaining=%ss)\n' "${STATUS:-Unknown}" "$elapsed" "$remaining"
+
+            case "$STATUS" in
+              Success)
+                break
+                ;;
+              Failed|TimedOut|Cancelled|Cancelling)
+                break
+                ;;
+              ""|Pending|InProgress|Delayed)
+                if [ "$now" -gt "$deadline" ]; then
+                  printf 'SSM command exceeded the configured executionTimeout; waiting for a terminal SSM status.\n'
+                fi
+                sleep "$poll_seconds"
+                ;;
+              *)
+                sleep "$poll_seconds"
+                ;;
+            esac
+          done
+
+          bash scripts/deploy/print-ssm-invocation.sh
+
+          FINAL_STATUS="$(aws ssm get-command-invocation --region "$SSM_REGION" --command-id "$COMMAND_ID" --instance-id "$SSM_INSTANCE_ID" --query 'Status' --output text)"
+
+          case "$FINAL_STATUS" in
+            Success)
+              ;;
+            Failed|TimedOut|Cancelled|Cancelling)
+              printf 'SSM command failed with status %s\n' "$FINAL_STATUS" >&2
+              exit 1
+              ;;
+            *)
+              printf 'SSM command ended with unexpected status %s\n' "$FINAL_STATUS" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Run staging smoke checks
+        run: |
+          set -euo pipefail
+          APP_URL="$APP_URL" API_URL="$API_URL" SMOKE_EXPECT_ENV=staging bash scripts/verify/smoke.sh
+
+      - name: Generate deployment manifest
+        env:
+          DEPLOY_ENVIRONMENT: staging
+        run: |
+          set -euo pipefail
+          bash scripts/deploy/generate-manifest.sh
+
+      - name: Upload deployment manifest
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: staging-deployment-manifest-${{ github.run_id }}
+          path: deployment-manifest.json
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Collect deployment diagnostics
+        if: ${{ failure() }}
+        env:
+          GITHUB_JOB_ID: ${{ github.job }}
+        run: |
+          bash scripts/deploy/diagnose-deploy-failure.sh

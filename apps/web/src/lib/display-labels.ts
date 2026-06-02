@@ -58,7 +58,7 @@ export function claimIntentLabel(value: string | null | undefined): string {
 }
 
 export function statusLabel(value: string | null | undefined): string {
-  if (!value || value === '—') return 'Not Set';
+  if (!value || value === '-') return 'Not Set';
   return titleCase(value);
 }
 

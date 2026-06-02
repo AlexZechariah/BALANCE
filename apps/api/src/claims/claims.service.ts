@@ -3,40 +3,17 @@ import type { ClaimStatus, DocumentStatus, Prisma, ReviewStatus } from '@balance
 
 import { AuditService } from '../audit/audit.service';
 import {
-  assertReviewVisibleToActor,
-  isOrgAdminRole,
   isSystemAdminRole,
-  sameOrganization,
-  type ActorContext
 } from '../auth/access-policy';
 import { throwContractHttpError } from '../common/contract-errors';
 import { PrismaService } from '../prisma/prisma.service';
-
-function assertClaimVisibleToActor(
-  claim: {
-    consumerId: string;
-    document: { organizationId?: string | null };
-    review: { status: ReviewStatus; reviewerId: string | null } | null;
-  },
-  actor: ActorContext
-) {
-  if (claim.consumerId === actor.actorId) return;
-  if (actor.actorRole === 'consumer') {
-    throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
-  }
-  if (isSystemAdminRole(actor.actorRole)) return;
-  if (isOrgAdminRole(actor.actorRole) && sameOrganization(actor, claim.document.organizationId)) return;
-  if (claim.review) {
-    assertReviewVisibleToActor({ ...claim.review, document: { organizationId: claim.document.organizationId ?? null } }, actor);
-    return;
-  }
-  throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
-}
+import { ScopedPrismaService } from '../prisma/scoped-prisma.service';
 
 @Injectable()
 export class ClaimsService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(ScopedPrismaService) private readonly scoped: ScopedPrismaService,
     @Inject(AuditService) private readonly audit: AuditService
   ) {}
 
@@ -48,8 +25,8 @@ export class ClaimsService {
     purpose: string;
     note?: string | null;
   }) {
-    const doc = await this.prisma.document.findUnique({
-      where: { id: input.documentId },
+    const actor = { id: input.consumerId, role: input.actorRole, organizationId: input.organizationId ?? null };
+    const doc = await this.scoped.findDocument(actor, input.documentId, {
       include: { claim: true }
     });
 
@@ -155,8 +132,8 @@ export class ClaimsService {
   }
 
   async recall(input: { claimId: string; actorId: string; actorRole: string; organizationId?: string | null }) {
-    const claim = await this.prisma.claim.findUnique({
-      where: { id: input.claimId },
+    const actor = { id: input.actorId, role: input.actorRole, organizationId: input.organizationId ?? null };
+    const claim = await this.scoped.findClaim(actor, input.claimId, {
       include: {
         review: { select: { id: true, status: true, reviewerId: true } },
         document: { select: { id: true, ownerId: true, organizationId: true, status: true, originalFilename: true } }
@@ -216,7 +193,7 @@ export class ClaimsService {
       entityId: claim.id,
       actor: { actorId: input.actorId, actorRole: input.actorRole },
       message: 'Claim recalled',
-      metadata: { originalFilename: claim.document.originalFilename },
+      metadata: {},
       documentId: claim.documentId,
       claimId: claim.id
     });
@@ -358,8 +335,8 @@ export class ClaimsService {
   }
 
   async getById(input: { userId: string; role: string; organizationId?: string | null; id: string }) {
-    const claim = await this.prisma.claim.findUnique({
-      where: { id: input.id },
+    const actor = { id: input.userId, role: input.role, organizationId: input.organizationId ?? null };
+    const claim = await this.scoped.findClaim(actor, input.id, {
       include: {
         consumer: { select: { id: true, displayName: true, email: true } },
         document: {
@@ -396,13 +373,12 @@ export class ClaimsService {
       }
     });
 
-    if (!claim) throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
-
-    assertClaimVisibleToActor(claim, {
-      actorId: input.userId,
-      actorRole: input.role,
-      organizationId: input.organizationId ?? null
-    });
+    if (!claim) {
+      if (input.role !== 'consumer' && await this.scoped.claimExists(input.id)) {
+        throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
+      }
+      throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
+    }
 
     const auditEvents = await this.prisma.auditEvent.findMany({
       where: {

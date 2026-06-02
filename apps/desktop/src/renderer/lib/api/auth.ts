@@ -1,4 +1,4 @@
-import { clearToken, desktopRequest, setToken } from './client';
+import { clearCsrfToken, desktopRequest, setCsrfToken } from './client';
 
 export interface DesktopUser {
   id: string;
@@ -7,17 +7,23 @@ export interface DesktopUser {
   displayName: string;
 }
 
+interface DesktopAuthResponse {
+  user: DesktopUser;
+  csrfToken?: string | null;
+}
+
 export async function desktopLogin(email: string, password: string): Promise<DesktopUser> {
-  const data = await desktopRequest<{ user: DesktopUser; accessToken: string }>('/auth/login', {
+  const data = await desktopRequest<DesktopAuthResponse>('/auth/login', {
     method: 'POST',
     body: JSON.stringify({ email, password }),
   });
-  setToken(data.accessToken);
+  setCsrfToken(data.csrfToken);
   return data.user;
 }
 
 export async function desktopGetCurrentUser(): Promise<DesktopUser> {
-  const data = await desktopRequest<{ user: DesktopUser }>('/auth/me');
+  const data = await desktopRequest<DesktopAuthResponse>('/auth/me');
+  setCsrfToken(data.csrfToken);
   return data.user;
 }
 
@@ -25,6 +31,6 @@ export async function desktopLogout(): Promise<void> {
   try {
     await desktopRequest('/auth/logout', { method: 'POST' });
   } finally {
-    clearToken();
+    clearCsrfToken();
   }
 }

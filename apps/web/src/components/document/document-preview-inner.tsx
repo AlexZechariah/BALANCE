@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import { ChevronLeft, ChevronRight, FileText, RotateCw, ZoomIn, ZoomOut } from 'lucide-react';
 import { Document as PdfDocument, Page, pdfjs } from 'react-pdf';
-import { getToken } from '@/lib/api/client';
 import { useOptionalCitation } from '@/components/document/interactive-citation';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -25,9 +24,8 @@ export function DocumentPreviewInner({ documentId, contentType, filename }: { do
 
     async function load() {
       try {
-        const token = getToken();
         const res = await fetch(`/api/documents/${documentId}/preview`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {}
+          credentials: 'include'
         });
         if (!res.ok) throw new Error(`Preview unavailable (${res.status})`);
         const blob = await res.blob();

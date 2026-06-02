@@ -20,6 +20,7 @@ import { ThemeToggle } from './theme-toggle';
 import { cn } from '@/lib/utils';
 import { AppFooter } from './system/app-footer';
 import { roleLabel } from '@/lib/display-labels';
+import { EmailVerificationNotice } from './security/email-verification-notice';
 
 export function EnterpriseLayout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
@@ -132,7 +133,10 @@ export function EnterpriseLayout({ children }: { children: ReactNode }) {
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-7xl px-4 py-6 lg:px-6 flex-1 w-full">{children}</main>
+      <main className="mx-auto max-w-7xl px-4 py-6 lg:px-6 flex-1 w-full">
+        <EmailVerificationNotice />
+        {children}
+      </main>
       <AppFooter />
     </div>
   );

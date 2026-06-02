@@ -3,6 +3,7 @@ import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 
 import { throwContractHttpError } from '../common/contract-errors';
+import { apiMetrics } from '../observability/metrics';
 import type { ObjectReference } from '../storage/object-storage.types';
 
 import { DEFAULT_EXTRACTION_JOB_NAME, DEFAULT_EXTRACTION_QUEUE_NAME } from './extraction-queue.constants';
@@ -41,20 +42,24 @@ export class ExtractionQueueService implements OnModuleDestroy {
   }
 
   async enqueue(payload: ExtractionJobPayload): Promise<void> {
-    try {
-      await this.queue.add(DEFAULT_EXTRACTION_JOB_NAME, payload, {
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 1000 },
-        removeOnComplete: true,
-        removeOnFail: false
-      });
-    } catch {
-      throwContractHttpError(503, 'SERVICE_UNAVAILABLE', 'Queue unavailable', []);
-    }
+    return apiMetrics.observeQueue('enqueue', async () => {
+      try {
+        await this.queue.add(DEFAULT_EXTRACTION_JOB_NAME, payload, {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 1000 },
+          removeOnComplete: true,
+          removeOnFail: false
+        });
+      } catch {
+        throwContractHttpError(503, 'SERVICE_UNAVAILABLE', 'Queue unavailable', []);
+      }
+    });
   }
 
   async checkReady(): Promise<void> {
-    await this.connection.ping();
+    await apiMetrics.observeReadiness('redis', async () => {
+      await this.connection.ping();
+    });
   }
 
   async onModuleDestroy() {

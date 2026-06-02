@@ -1,10 +1,16 @@
 'use client';
 
-import { type FormEvent, useMemo, useState } from 'react';
-import { ShieldCheck } from 'lucide-react';
+import { type FormEvent, useEffect, useMemo, useState } from 'react';
+import { KeyRound, LogOut, MailCheck, MailWarning, ShieldCheck } from 'lucide-react';
 
 import { useAuth } from '@/context/auth-context';
 import { BalanceApiError } from '@/lib/api/client';
+import {
+  listSessions,
+  requestEmailVerification,
+  revokeOtherSessions,
+  type AuthSessionSummary,
+} from '@/lib/api/auth';
 import { validatePasswordComplexity } from '@/lib/role-permissions';
 import { Alert } from '@/components/ui/alert';
 import {
@@ -26,7 +32,7 @@ import { Label } from '@/components/ui/label';
 import { PasswordField } from '@/components/forms/password-field';
 
 export function AccountSettings({ variant }: { variant: 'consumer' | 'enterprise' }) {
-  const { user, updateAccount } = useAuth();
+  const { user, updateAccount, logout } = useAuth();
   const [displayName, setDisplayName] = useState(user?.displayName ?? '');
   const [email, setEmail] = useState(user?.email ?? '');
   const [currentPassword, setCurrentPassword] = useState('');
@@ -36,6 +42,16 @@ export function AccountSettings({ variant }: { variant: 'consumer' | 'enterprise
   const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [sessions, setSessions] = useState<AuthSessionSummary[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
+  const [sessionActionPending, setSessionActionPending] = useState(false);
+
+  useEffect(() => {
+    listSessions()
+      .then(({ sessions: activeSessions }) => setSessions(activeSessions))
+      .catch(() => setError('Active sessions could not be loaded.'))
+      .finally(() => setSessionsLoading(false));
+  }, []);
 
   const sensitiveChange = useMemo(
     () => Boolean(user && (email.trim() !== user.email || newPassword)),
@@ -104,6 +120,40 @@ export function AccountSettings({ variant }: { variant: 'consumer' | 'enterprise
     void submit();
   }
 
+  async function resendVerification() {
+    if (!user) return;
+    setError(null);
+    setNotice(null);
+    try {
+      await requestEmailVerification(user.email);
+      setNotice('Verification requested. Check the configured delivery channel.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to request email verification.');
+    }
+  }
+
+  async function revokeOthers() {
+    setError(null);
+    setNotice(null);
+    setSessionActionPending(true);
+    try {
+      const { revokedCount } = await revokeOtherSessions();
+      const { sessions: activeSessions } = await listSessions();
+      setSessions(activeSessions);
+      setNotice(`${revokedCount} other active ${revokedCount === 1 ? 'session' : 'sessions'} revoked.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to revoke other sessions.');
+    } finally {
+      setSessionActionPending(false);
+    }
+  }
+
+  async function signOut() {
+    setSessionActionPending(true);
+    await logout();
+    window.location.assign('/login');
+  }
+
   return (
     <>
       <div className="grid gap-5">
@@ -111,6 +161,35 @@ export function AccountSettings({ variant }: { variant: 'consumer' | 'enterprise
           <p className="text-sm text-muted-foreground">{variant === 'enterprise' ? 'Account administration' : 'Personal account'}</p>
           <h1 className="mt-1 text-3xl font-semibold tracking-tight">Settings</h1>
         </div>
+
+        <Card variant="panel" className="max-w-2xl">
+          <CardHeader>
+            <CardTitle>Email verification</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Verified email is required for claims and privileged review, membership, and administration actions.
+            </p>
+          </CardHeader>
+          <CardContent className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-2 text-sm">
+              {user?.emailVerifiedAt ? (
+                <>
+                  <MailCheck className="size-4 text-success" aria-hidden="true" />
+                  <span>Verified on {new Date(user.emailVerifiedAt).toLocaleDateString()}</span>
+                </>
+              ) : (
+                <>
+                  <MailWarning className="size-4 text-warning" aria-hidden="true" />
+                  <span>Verification required for high-trust actions.</span>
+                </>
+              )}
+            </div>
+            {!user?.emailVerifiedAt && (
+              <Button type="button" variant="outline" onClick={() => void resendVerification()}>
+                Resend verification
+              </Button>
+            )}
+          </CardContent>
+        </Card>
 
         <Card variant="panel" className="max-w-2xl">
           <CardHeader>
@@ -165,6 +244,57 @@ export function AccountSettings({ variant }: { variant: 'consumer' | 'enterprise
                 {submitting ? 'Saving...' : 'Save settings'}
               </Button>
             </form>
+          </CardContent>
+        </Card>
+
+        <Card variant="panel" className="max-w-2xl">
+          <CardHeader>
+            <CardTitle>Active sessions</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Only session timing and current-session status are shown. Sign out to revoke this session.
+            </p>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            {sessionsLoading ? (
+              <p className="text-sm text-muted-foreground" role="status">Loading active sessions...</p>
+            ) : sessions.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No active sessions were returned.</p>
+            ) : (
+              <ul className="grid gap-3" aria-label="Active sessions">
+                {sessions.map((session) => (
+                  <li key={session.id} className="rounded-md border border-border p-3 text-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="flex items-center gap-2 font-medium">
+                        <KeyRound className="size-4" aria-hidden="true" />
+                        {session.isCurrent ? 'Current session' : 'Other session'}
+                      </span>
+                      <span className="text-muted-foreground">
+                        Expires {new Date(session.expiresAt).toLocaleString()}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-muted-foreground">
+                      Created {new Date(session.createdAt).toLocaleString()}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flex flex-wrap gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={sessionActionPending || sessions.every((session) => session.isCurrent)}
+                onClick={() => void revokeOthers()}
+              >
+                Revoke other sessions
+              </Button>
+              <Button type="button" variant="destructive" disabled={sessionActionPending} onClick={() => void signOut()}>
+                <LogOut className="size-4" />
+                Sign out
+              </Button>
+            </div>
+            {notice && <Alert role="status" variant="success">{notice}</Alert>}
+            {error && <Alert role="alert" variant="destructive">{error}</Alert>}
           </CardContent>
         </Card>
       </div>

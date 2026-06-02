@@ -96,7 +96,7 @@ export function ClaimReviewPanel({
     async (field: FieldItem) => {
       const trimmed = editValue.trim();
       if (trimmed === (field.correctedValue ?? field.value)) {
-        // No change — just close the editor
+        // No change; just close the editor.
         handleCancelEdit();
         return;
       }

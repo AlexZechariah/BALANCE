@@ -1,0 +1,5 @@
+base-url: http://127.0.0.1:8081
+listen-http: :80
+cache-file: /var/cache/ntfy/cache.db
+cache-duration: 24h
+behind-proxy: true

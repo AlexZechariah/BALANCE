@@ -4,6 +4,7 @@ import './globals.css';
 import { AuthProvider } from '../context/auth-context';
 import { MotionProvider } from '../components/motion-provider';
 import { ThemeProvider } from '../components/theme-provider';
+import { WebVitalsReporter } from '../components/observability/web-vitals-reporter';
 import { Toaster } from 'sonner';
 
 export const metadata: Metadata = {
@@ -31,6 +32,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={`${figtree.variable} ${jetbrainsMono.variable}`}>
         <ThemeProvider>
           <MotionProvider>
+            <WebVitalsReporter />
             <AuthProvider>{children}</AuthProvider>
             <Toaster richColors position="bottom-right" />
           </MotionProvider>

@@ -11,7 +11,14 @@ import { AuthGuard, type AuthenticatedRequestUser } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
+import { RequireVerifiedEmail, RequireVerifiedEmailForRoles } from '../auth/verified-email.decorator';
+import { VerifiedEmailGuard } from '../auth/verified-email.guard';
+import { Actions } from '../authorization/actions';
+import { CheckPolicies } from '../authorization/policy.decorator';
+import { PolicyGuard } from '../authorization/policy.guard';
+import { Subjects } from '../authorization/subjects';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { BalanceRateLimit } from '../rate-limit/rate-limit.decorator';
 
 import { ClaimsService } from './claims.service';
 
@@ -20,8 +27,11 @@ export class ClaimsController {
   constructor(@Inject(ClaimsService) private readonly claims: ClaimsService) {}
 
   @Post()
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('claim')
+  @UseGuards(AuthGuard, RolesGuard, VerifiedEmailGuard, PolicyGuard)
   @Roles('consumer', 'staff', 'admin')
+  @RequireVerifiedEmail()
+  @CheckPolicies((ability) => ability.can(Actions.submit, Subjects.Claim))
   async create(
     @Body(new ZodValidationPipe(claimSubmissionPayloadSchema)) body: ClaimSubmissionPayload,
     @CurrentUser() user: AuthenticatedRequestUser
@@ -37,8 +47,10 @@ export class ClaimsController {
   }
 
   @Get()
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('list')
+  @UseGuards(AuthGuard, RolesGuard, PolicyGuard)
   @Roles('consumer', 'staff', 'admin')
+  @CheckPolicies((ability) => ability.can(Actions.read, Subjects.Claim))
   async list(
     @Query(new ZodValidationPipe(claimListQuerySchema)) query: ClaimListQuery,
     @CurrentUser() user: AuthenticatedRequestUser
@@ -61,15 +73,20 @@ export class ClaimsController {
   }
 
   @Get('insights')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('insights')
+  @UseGuards(AuthGuard, RolesGuard, PolicyGuard)
   @Roles('consumer', 'staff', 'admin')
+  @CheckPolicies((ability) => ability.can(Actions.read, Subjects.Claim))
   async insights(@CurrentUser() user: AuthenticatedRequestUser) {
     return this.claims.insights({ consumerId: user.id });
   }
 
   @Post(':id/recall')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('claim')
+  @UseGuards(AuthGuard, RolesGuard, VerifiedEmailGuard, PolicyGuard)
   @Roles('staff', 'admin', 'system_admin')
+  @RequireVerifiedEmailForRoles('admin', 'system_admin')
+  @CheckPolicies((ability) => ability.can(Actions.update, Subjects.Claim))
   @HttpCode(200)
   async recall(@Param('id') id: string, @CurrentUser() user: AuthenticatedRequestUser) {
     return this.claims.recall({
@@ -81,8 +98,10 @@ export class ClaimsController {
   }
 
   @Get(':id')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('read')
+  @UseGuards(AuthGuard, RolesGuard, PolicyGuard)
   @Roles('consumer', 'reviewer', 'staff', 'admin', 'system_admin')
+  @CheckPolicies((ability) => ability.can(Actions.read, Subjects.Claim))
   async detail(@Param('id') id: string, @CurrentUser() user: AuthenticatedRequestUser) {
     return this.claims.getById({ id, userId: user.id, role: user.role, organizationId: user.organizationId });
   }

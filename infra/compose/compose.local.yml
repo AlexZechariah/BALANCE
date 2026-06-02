@@ -66,6 +66,16 @@ services:
       TESSERACT_OEM: ${TESSERACT_OEM:-1}
       TESSERACT_PSM: ${TESSERACT_PSM:-6}
       PDF_OCR_DPI: ${PDF_OCR_DPI:-300}
+      PDF_MAX_PAGES: ${PDF_MAX_PAGES:-}
+      OCR_MAX_PAGES_LOCAL: ${OCR_MAX_PAGES_LOCAL:-}
+      OCR_MAX_IMAGE_PIXELS: ${OCR_MAX_IMAGE_PIXELS:-50000000}
+      WORKER_OTEL_ENABLED: ${WORKER_OTEL_ENABLED:-true}
+      WORKER_PROFILING_ENABLED: ${WORKER_PROFILING_ENABLED:-true}
+      OTEL_SERVICE_NAME: balance-worker
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4318
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://alloy:4318/v1/traces
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://alloy:4318/v1/logs
+      PYROSCOPE_SERVER_ADDRESS: http://pyroscope:4040
     depends_on:
       redis:
         condition: service_healthy
@@ -74,45 +84,20 @@ services:
     expose:
       - '8000'
     healthcheck:
-      test: ['CMD', 'curl', '-fsS', 'http://localhost:8000/health']
+      test:
+        [
+          'CMD',
+          'python3.13',
+          '-c',
+          "import sys, urllib.request; response = urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3); sys.exit(0 if 200 <= response.status < 400 else 1)"
+        ]
       interval: 10s
       timeout: 3s
       retries: 20
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    command: ["python3.13", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     volumes:
       - balance-storage:/data/balance-storage
     restart: unless-stopped
-
-  # AWS profile remains legacy-only and may use host bind mounts for credentials.
-  worker-aws:
-    profiles: ['aws']
-    extends:
-      service: worker
-    environment:
-      AWS_REGION: ${AWS_REGION:-}
-      AWS_PROFILE: ${AWS_PROFILE:-}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
-      AWS_SDK_LOAD_CONFIG: ${AWS_SDK_LOAD_CONFIG:-0}
-      AWS_EC2_METADATA_DISABLED: ${AWS_EC2_METADATA_DISABLED:-true}
-      S3_BUCKET: ${S3_BUCKET:-}
-      S3_REGION: ${S3_REGION:-}
-    volumes:
-      # Mount Python app source code (inherited from worker, but must be
-      # restated here because extends replaces volume lists instead of appending).
-      - type: bind
-        source: ../../services/worker/app
-        target: /worker/app
-      - type: bind
-        source: ${BALANCE_STORAGE_HOST_PATH:-../../tmp/balance-storage}
-        target: /data/balance-storage
-      # Mount host AWS config/credentials for boto3.
-      # Set AWS_CONFIG_HOST_PATH if your creds are not at the default location.
-      - type: bind
-        source: ${AWS_CONFIG_HOST_PATH:-${USERPROFILE}/.aws}
-        target: /root/.aws
-        read_only: true
 
   api:
     build:
@@ -125,22 +110,34 @@ services:
       DEPLOYMENT_NAMESPACE: ${DEPLOYMENT_NAMESPACE:-balance}
       APP_ENV: local
       NODE_ENV: ${NODE_ENV:-development}
-      APP_VERSION: ${APP_VERSION:-0.5.0}
+      APP_VERSION: ${APP_VERSION:-0.6.0}
       GIT_COMMIT: ${GIT_COMMIT:-local}
       BUILD_ID: ${BUILD_ID:-local-build}
       API_PORT: 3001
+      API_JSON_BODY_LIMIT: ${API_JSON_BODY_LIMIT:-1mb}
+      API_URLENCODED_BODY_LIMIT: ${API_URLENCODED_BODY_LIMIT:-100kb}
+      AUTH_DEV_EXPOSE_ACCOUNT_TOKENS: ${AUTH_DEV_EXPOSE_ACCOUNT_TOKENS:-false}
+      AUTH_SELF_REGISTRATION_ENABLED: ${AUTH_SELF_REGISTRATION_ENABLED:-true}
+      AUTH_ACCOUNT_TOKEN_RETENTION_DAYS: ${AUTH_ACCOUNT_TOKEN_RETENTION_DAYS:-7}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      EXTERNAL_WEB_ORIGIN: ${EXTERNAL_WEB_ORIGIN:-http://localhost:3000}
       DATABASE_URL: postgresql://balance:balance@postgres:5432/balance?schema=public
       REDIS_URL: redis://redis:6379
       OBJECT_STORAGE_PROVIDER: ${OBJECT_STORAGE_PROVIDER:-filesystem}
       STORAGE_DRIVER: ${STORAGE_DRIVER:-filesystem}
-      # Hardcoded to /data/balance-storage (same reason as worker — host Windows path is meaningless inside Docker).
+      # Hardcoded to /data/balance-storage because the host Windows path is meaningless inside Docker.
       OBJECT_STORAGE_FILESYSTEM_ROOT: /data/balance-storage
       STORAGE_FILESYSTEM_ROOT: /data/balance-storage
       EXTRACTION_PROVIDER_DEFAULT: ${EXTRACTION_PROVIDER_DEFAULT:-paddleocr}
       EXTRACTION_ALLOW_LEGACY_TEXTRACT: ${EXTRACTION_ALLOW_LEGACY_TEXTRACT:-false}
-      JWT_SECRET: ${JWT_SECRET:-replace-this-local-only}
-      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1h}
-      PASSWORD_PEPPER: ${PASSWORD_PEPPER:-replace-this-local-only}
+      API_OTEL_ENABLED: ${API_OTEL_ENABLED:-true}
+      API_PROFILING_ENABLED: ${API_PROFILING_ENABLED:-true}
+      OTEL_SERVICE_NAME: balance-api
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4318
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://alloy:4318/v1/traces
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://alloy:4318/v1/logs
+      PYROSCOPE_SERVER_ADDRESS: http://pyroscope:4040
     expose:
       - '3001'
     depends_on:
@@ -152,29 +149,6 @@ services:
       - balance-storage:/data/balance-storage
     restart: unless-stopped
 
-  api-aws:
-    profiles: ['aws']
-    extends:
-      service: api
-    environment:
-      AWS_REGION: ${AWS_REGION:-}
-      AWS_PROFILE: ${AWS_PROFILE:-}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
-      AWS_SDK_LOAD_CONFIG: ${AWS_SDK_LOAD_CONFIG:-0}
-      AWS_EC2_METADATA_DISABLED: ${AWS_EC2_METADATA_DISABLED:-true}
-      S3_BUCKET: ${S3_BUCKET:-}
-      S3_REGION: ${S3_REGION:-}
-    volumes:
-      - type: bind
-        source: ${BALANCE_STORAGE_HOST_PATH:-../../tmp/balance-storage}
-        target: /data/balance-storage
-      - type: bind
-        source: ${AWS_CONFIG_HOST_PATH:-${USERPROFILE}/.aws}
-        target: /root/.aws
-        read_only: true
-
   web:
     build:
       context: ../..
@@ -183,6 +157,7 @@ services:
         API_BASE_PATH: ${API_BASE_PATH:-/api}
         API_PROXY_TARGET: ${API_PROXY_TARGET:-http://api:3001}
         NEXT_PUBLIC_API_BASE_PATH: ${NEXT_PUBLIC_API_BASE_PATH:-/api}
+        NEXT_PUBLIC_WEB_CLIENT_TELEMETRY_ENABLED: ${NEXT_PUBLIC_WEB_CLIENT_TELEMETRY_ENABLED:-true}
     depends_on:
       - api
     environment:
@@ -192,7 +167,7 @@ services:
       DEPLOYMENT_NAMESPACE: ${DEPLOYMENT_NAMESPACE:-balance}
       APP_ENV: local
       NODE_ENV: ${NODE_ENV:-development}
-      APP_VERSION: ${APP_VERSION:-0.5.0}
+      APP_VERSION: ${APP_VERSION:-0.6.0}
       GIT_COMMIT: ${GIT_COMMIT:-local}
       BUILD_ID: ${BUILD_ID:-local-build}
       WEB_PORT: 3000
@@ -206,6 +181,17 @@ services:
       NEXT_PUBLIC_API_BASE_PATH: ${NEXT_PUBLIC_API_BASE_PATH:-/api}
       NEXT_PUBLIC_API_HEALTH_PATH: ${NEXT_PUBLIC_API_HEALTH_PATH:-/api/health}
       NEXT_PUBLIC_API_VERSION_PATH: ${NEXT_PUBLIC_API_VERSION_PATH:-/api/version}
+      NEXT_PUBLIC_WEB_CLIENT_TELEMETRY_ENABLED: ${NEXT_PUBLIC_WEB_CLIENT_TELEMETRY_ENABLED:-true}
+      WEB_OTEL_ENABLED: ${WEB_OTEL_ENABLED:-true}
+      WEB_PROFILING_ENABLED: ${WEB_PROFILING_ENABLED:-true}
+      WEB_CLIENT_TELEMETRY_ENABLED: ${WEB_CLIENT_TELEMETRY_ENABLED:-true}
+      WEB_INTERNAL_METRICS_ENABLED: ${WEB_INTERNAL_METRICS_ENABLED:-true}
+      WEB_INTERNAL_METRICS_HOSTS: ${WEB_INTERNAL_METRICS_HOSTS:-web:3000}
+      OTEL_SERVICE_NAME: balance-web
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4318
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://alloy:4318/v1/traces
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://alloy:4318/v1/logs
+      PYROSCOPE_SERVER_ADDRESS: http://pyroscope:4040
     ports:
       - target: 3000
         published: 3000
@@ -213,6 +199,287 @@ services:
         mode: host
     restart: unless-stopped
 
+  prometheus:
+    image: prom/prometheus:v3.12.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=14d
+      - --web.enable-lifecycle
+    volumes:
+      - ../observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../observability/prometheus/rules.yml:/etc/prometheus/rules.yml:ro
+      - balance-prometheus:/prometheus
+    ports:
+      - host_ip: 127.0.0.1
+        target: 9090
+        published: 9090
+        protocol: tcp
+        mode: host
+    depends_on:
+      - alertmanager
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:v0.32.1
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ../observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - balance-alertmanager:/alertmanager
+    ports:
+      - host_ip: 127.0.0.1
+        target: 9093
+        published: 9093
+        protocol: tcp
+        mode: host
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana-oss:13.0.1-security-01
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change-me-for-local-only}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_AUTH_ANONYMOUS_ENABLED: 'false'
+      GF_SECURITY_COOKIE_SECURE: ${GRAFANA_COOKIE_SECURE:-false}
+      GF_METRICS_ENABLED: 'true'
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://127.0.0.1:3002}
+    volumes:
+      - ../observability/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ../observability/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ../observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - balance-grafana:/var/lib/grafana
+    ports:
+      - host_ip: 127.0.0.1
+        target: 3000
+        published: 3002
+        protocol: tcp
+        mode: host
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+      - pyroscope
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.7.2
+    command:
+      - -config.file=/etc/loki/loki.yml
+    volumes:
+      - ../observability/loki/loki.yml:/etc/loki/loki.yml:ro
+      - balance-loki:/loki
+    ports:
+      - host_ip: 127.0.0.1
+        target: 3100
+        published: 3100
+        protocol: tcp
+        mode: host
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:3.0.0
+    command:
+      - -config.file=/etc/tempo/tempo.yml
+    volumes:
+      - ../observability/tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+      - balance-tempo:/var/tempo
+    expose:
+      - '4317'
+      - '4318'
+    ports:
+      - host_ip: 127.0.0.1
+        target: 3200
+        published: 3200
+        protocol: tcp
+        mode: host
+    restart: unless-stopped
+
+  alloy:
+    image: grafana/alloy:v1.16.1
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - /etc/alloy/config.alloy
+    volumes:
+      - ../observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+    expose:
+      - '12345'
+      - '4317'
+      - '4318'
+    depends_on:
+      - loki
+      - tempo
+    restart: unless-stopped
+
+  pyroscope:
+    image: grafana/pyroscope:2.0.2
+    command:
+      - -config.file=/etc/pyroscope/pyroscope.yml
+      - -config.show_banner=false
+      - -pyroscopedb.data-path=/var/lib/pyroscope
+    volumes:
+      - ../observability/pyroscope/pyroscope.yml:/etc/pyroscope/pyroscope.yml:ro
+      - balance-pyroscope:/var/lib/pyroscope
+    ports:
+      - host_ip: 127.0.0.1
+        target: 4040
+        published: 4040
+        protocol: tcp
+        mode: host
+    restart: unless-stopped
+
+  gatus:
+    image: ghcr.io/twin/gatus:v5.36.0
+    volumes:
+      - ../observability/gatus/config.yml:/config/config.yaml:ro
+      - balance-gatus:/data
+    ports:
+      - host_ip: 127.0.0.1
+        target: 8080
+        published: 8080
+        protocol: tcp
+        mode: host
+    depends_on:
+      - web
+      - api
+      - worker
+      - postgres
+      - redis
+      - grafana
+      - prometheus
+      - loki
+      - tempo
+      - pyroscope
+    restart: unless-stopped
+
+  ntfy:
+    image: binwiederhier/ntfy:v2.23.0
+    command:
+      - serve
+      - --config
+      - /etc/ntfy/server.yml
+    volumes:
+      - ../observability/ntfy/server.yml:/etc/ntfy/server.yml:ro
+      - balance-ntfy:/var/cache/ntfy
+    ports:
+      - host_ip: 127.0.0.1
+        target: 80
+        published: 8081
+        protocol: tcp
+        mode: host
+    restart: unless-stopped
+
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.19.1
+    environment:
+      DATA_SOURCE_URI: postgres:5432/balance?sslmode=disable
+      DATA_SOURCE_USER: ${POSTGRES_USER:-balance}
+      DATA_SOURCE_PASS: ${POSTGRES_PASSWORD:-balance}
+    expose:
+      - '9187'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.84.0
+    command:
+      - --redis.addr=redis://redis:6379
+    expose:
+      - '9121'
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.28.0
+    command:
+      - --config.file=/etc/blackbox_exporter/blackbox.yml
+    volumes:
+      - ../observability/blackbox/blackbox.yml:/etc/blackbox_exporter/blackbox.yml:ro
+    expose:
+      - '9115'
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2.11.3
+    profiles:
+      - production
+    environment:
+      BALANCE_BASE_DOMAIN: ${BALANCE_BASE_DOMAIN:-localhost.localdomain}
+      BALANCE_TLS_EMAIL: ${BALANCE_TLS_EMAIL:-security@localhost.localdomain}
+    volumes:
+      - ../observability/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - balance-caddy-data:/data
+      - balance-caddy-config:/config
+    ports:
+      - target: 80
+        published: 80
+        protocol: tcp
+        mode: host
+      - target: 443
+        published: 443
+        protocol: tcp
+        mode: host
+    depends_on:
+      - gatus
+      - grafana
+      - authelia
+    restart: unless-stopped
+
+  authelia:
+    image: authelia/authelia:4.39.20
+    profiles:
+      - production
+    entrypoint:
+      - authelia
+    command:
+      - --config.experimental.filters
+      - template
+      - --config
+      - /config/configuration.yml
+    environment:
+      BALANCE_BASE_DOMAIN: ${BALANCE_BASE_DOMAIN:-localhost.localdomain}
+      AUTHELIA_SESSION_SECRET: ${AUTHELIA_SESSION_SECRET:-}
+      AUTHELIA_STORAGE_ENCRYPTION_KEY: ${AUTHELIA_STORAGE_ENCRYPTION_KEY:-}
+      AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET: ${AUTHELIA_JWT_SECRET:-}
+    volumes:
+      - ../observability/authelia/config.yml:/config/configuration.yml:ro
+      - ../observability/authelia/users.yml:/config/users.yml:ro
+      - balance-authelia:/var/lib/authelia
+    expose:
+      - '9091'
+    restart: unless-stopped
+
+  node-exporter:
+    image: prom/node-exporter:v1.11.1
+    profiles:
+      - observe-deep
+    # Phase 09 keeps this profile isolated and host-safe by default.
+    # Useful cAdvisor container metrics require Docker socket or broad host mounts, so cAdvisor is withheld until explicit local-only approval.
+    command:
+      - --path.rootfs=/
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+)($$|/)
+    expose:
+      - '9100'
+    restart: unless-stopped
+
 volumes:
   postgres18-data-v18:
   balance-storage:
+  balance-prometheus:
+  balance-alertmanager:
+  balance-grafana:
+  balance-loki:
+  balance-tempo:
+  balance-pyroscope:
+  balance-gatus:
+  balance-ntfy:
+  balance-caddy-data:
+  balance-caddy-config:
+  balance-authelia:

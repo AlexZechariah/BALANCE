@@ -39,10 +39,10 @@ export function useSystemStatus(): SystemStatus {
     app: 'Balance',
     service: 'balance-api',
     environment: 'unknown',
-    version: '—',
-    commit: '—',
-    shortCommit: '—',
-    build: '—',
+    version: '-',
+    commit: '-',
+    shortCommit: '-',
+    build: '-',
     healthStatus: 'unknown' as HealthStatus,
     readyStatus: 'unknown' as ReadyStatus,
     overallStatus: 'unknown' as OverallStatus,
@@ -59,8 +59,8 @@ export function useSystemStatus(): SystemStatus {
         getApiReady(),
       ]);
 
-      const commit = version?.commit ?? '—';
-      const shortCommit = commit !== '—' && commit.length >= 7 ? commit.slice(0, 7) : commit;
+      const commit = version?.commit ?? '-';
+      const shortCommit = commit !== '-' && commit.length >= 7 ? commit.slice(0, 7) : commit;
       const healthStatus: HealthStatus = health?.status === 'ok' ? 'ok' : health === null ? 'unavailable' : 'unknown';
       const readyStatus: ReadyStatus = ready?.status === 'ready' ? 'ready' : ready === null ? 'not_ready' : 'unknown';
 
@@ -68,10 +68,10 @@ export function useSystemStatus(): SystemStatus {
         app: version?.app ?? 'Balance',
         service: version?.service ?? 'balance-api',
         environment: version?.environment ?? 'unknown',
-        version: version?.version ?? '—',
+        version: version?.version ?? '-',
         commit,
         shortCommit,
-        build: version?.build ?? '—',
+        build: version?.build ?? '-',
         healthStatus,
         readyStatus,
         overallStatus: deriveOverallStatus(healthStatus, readyStatus),

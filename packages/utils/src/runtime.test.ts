@@ -15,6 +15,10 @@ describe('normalizeEnvironment', () => {
   it('normalizes mixed-case values', () => {
     expect(normalizeEnvironment('StAgInG')).toBe('staging');
   });
+
+  it('rejects unsupported explicit values instead of falling back to local', () => {
+    expect(() => normalizeEnvironment('prodction')).toThrow('Unsupported application environment');
+  });
 });
 
 describe('parsePort', () => {

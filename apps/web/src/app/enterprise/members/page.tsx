@@ -266,7 +266,7 @@ export default function MembersPage() {
                         onChange={setNewPassword}
                         autoComplete="new-password"
                         disabled={submitting}
-                        placeholder="At least 8 characters"
+                        placeholder="At least 15 characters"
                       />
                       <div>
                         <Label htmlFor="newRole">Role</Label>
@@ -476,7 +476,7 @@ export default function MembersPage() {
                                         onChange={setResetPasswordValue}
                                         autoComplete="new-password"
                                         disabled={resettingMemberId === member.id}
-                                        placeholder="At least 8 characters"
+                                        placeholder="At least 15 characters"
                                         error={resetError}
                                       />
                                     </div>

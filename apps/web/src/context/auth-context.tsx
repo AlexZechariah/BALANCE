@@ -3,7 +3,6 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 
-import { clearToken, getToken } from '../lib/api/client';
 import { getCurrentUser, login as apiLogin, logout as apiLogout, register as apiRegister, updateAccount as apiUpdateAccount } from '../lib/api/auth';
 import type { AuthUser } from '../lib/api/auth';
 
@@ -30,15 +29,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
 
   useEffect(() => {
-    const token = getToken();
-    if (!token) {
-      setState({ user: null, loading: false, error: null });
-      return;
-    }
     getCurrentUser()
       .then((user) => setState({ user, loading: false, error: null }))
       .catch(() => {
-        clearToken();
         setState({ user: null, loading: false, error: null });
       });
   }, []);

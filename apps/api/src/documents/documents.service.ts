@@ -6,24 +6,20 @@ import type {
   ExtractionJobStatus,
   FieldName,
   FieldSource,
-  Prisma,
-  ReviewStatus
+  Prisma
 } from '@balance/db';
 
 import { throwContractHttpError, throwValidationError } from '../common/contract-errors';
 import { ExtractionService } from '../extraction/extraction.service';
 import { ExtractionProviderValidationError } from '../extraction/extraction.validation';
 import { PrismaService } from '../prisma/prisma.service';
+import { ScopedPrismaService } from '../prisma/scoped-prisma.service';
 import { ExtractionQueueService } from '../queue/extraction-queue.service';
 import { ObjectStorageService } from '../storage/object-storage.service';
 import { AuditService } from '../audit/audit.service';
-import {
-  assertReviewVisibleToActor,
-  isOrgAdminRole,
-  isSystemAdminRole,
-  sameOrganization,
-  type ActorContext
-} from '../auth/access-policy';
+import { SECURITY_AUDIT_ACTIONS } from '../audit/audit-event.constants';
+import { isSystemAdminRole } from '../auth/access-policy';
+import { QUEUE_ABUSE_LIMITS } from '../rate-limit/queue-abuse-limits';
 
 import {
   amountLikeToMinor,
@@ -32,8 +28,7 @@ import {
   effectiveDocumentMonth,
   fieldValue
 } from './document-spend';
-
-const ACCEPTED_CONTENT_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
+import { UploadSecurityService } from './upload-security.service';
 
 function fieldLabel(name: FieldName): string {
   const labels: Record<string, string> = {
@@ -260,36 +255,71 @@ function mapDocumentSummary(d: {
   };
 }
 
-function assertDocumentVisibleToActor(
-  document: {
-    ownerId: string;
-    organizationId: string | null;
-    review?: { status: ReviewStatus; reviewerId: string | null } | null;
-  },
-  actor: ActorContext
-) {
-  if (document.ownerId === actor.actorId) return;
-  if (actor.actorRole === 'consumer') {
-    throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
-  }
-  if (isSystemAdminRole(actor.actorRole)) return;
-  if (isOrgAdminRole(actor.actorRole) && sameOrganization(actor, document.organizationId)) return;
-  if (document.review) {
-    assertReviewVisibleToActor({ ...document.review, document: { organizationId: document.organizationId } }, actor);
-    return;
-  }
-  throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
-}
-
 @Injectable()
 export class DocumentsService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(ScopedPrismaService) private readonly scoped: ScopedPrismaService,
+    @Inject(UploadSecurityService) private readonly uploadSecurity: UploadSecurityService,
     @Inject(ObjectStorageService) private readonly storage: ObjectStorageService,
     @Inject(ExtractionService) private readonly extraction: ExtractionService,
     @Inject(ExtractionQueueService) private readonly queue: ExtractionQueueService,
     @Inject(AuditService) private readonly audit: AuditService
   ) {}
+
+  private async assertQueuedJobLimit(input: { ownerId: string; actorRole: string; organizationId?: string | null }) {
+    const queuedCount = await this.prisma.extractionJob.count({
+      where: {
+        status: { in: ['queued', 'processing'] satisfies ExtractionJobStatus[] },
+        document: { ownerId: input.ownerId }
+      }
+    });
+
+    if (queuedCount < QUEUE_ABUSE_LIMITS.maxQueuedExtractionJobsPerUser) return;
+
+    await this.audit.writeEvent({
+      action: SECURITY_AUDIT_ACTIONS.rateLimitTriggered,
+      entityType: 'security_event',
+      entityId: input.ownerId,
+      actor: { actorId: input.ownerId, actorRole: input.actorRole },
+      message: 'Queued extraction job limit triggered',
+      metadata: {
+        policy: 'maxQueuedExtractionJobsPerUser',
+        limit: QUEUE_ABUSE_LIMITS.maxQueuedExtractionJobsPerUser
+      },
+      organizationId: input.organizationId ?? null
+    });
+
+    throwContractHttpError(429, 'RATE_LIMITED', 'Rate limit exceeded', []);
+  }
+
+  private async assertExtractionRetryLimit(input: { documentId: string; actorId: string; actorRole: string; organizationId?: string | null }) {
+    const since = new Date(Date.now() - 60 * 60_000);
+    const retryCount = await this.prisma.extractionJob.count({
+      where: {
+        documentId: input.documentId,
+        createdAt: { gte: since }
+      }
+    });
+
+    if (retryCount < QUEUE_ABUSE_LIMITS.maxExtractionRetriesPerDocumentPerHour) return;
+
+    await this.audit.writeEvent({
+      action: SECURITY_AUDIT_ACTIONS.rateLimitTriggered,
+      entityType: 'security_event',
+      entityId: input.documentId,
+      actor: { actorId: input.actorId, actorRole: input.actorRole },
+      message: 'Extraction retry limit triggered',
+      metadata: {
+        policy: 'maxExtractionRetriesPerDocumentPerHour',
+        limit: QUEUE_ABUSE_LIMITS.maxExtractionRetriesPerDocumentPerHour
+      },
+      documentId: input.documentId,
+      organizationId: input.organizationId ?? null
+    });
+
+    throwContractHttpError(429, 'RATE_LIMITED', 'Rate limit exceeded', []);
+  }
 
   async upload(input: {
     ownerId: string;
@@ -306,8 +336,31 @@ export class DocumentsService {
     claimIntent?: string | null;
     documentType?: string | null;
   }) {
-    if (!ACCEPTED_CONTENT_TYPES.has(input.contentType)) {
-      throwContractHttpError(415, 'UNSUPPORTED_MEDIA_TYPE', 'Unsupported media type', []);
+    await this.assertQueuedJobLimit({
+      ownerId: input.ownerId,
+      actorRole: input.actorRole,
+      organizationId: input.organizationId ?? null
+    });
+
+    let upload: Awaited<ReturnType<UploadSecurityService['validate']>>;
+    try {
+      upload = await this.uploadSecurity.validate({
+        originalFilename: input.originalFilename,
+        clientContentType: input.contentType,
+        sizeBytes: input.sizeBytes,
+        body: input.body
+      });
+    } catch (error) {
+      await this.audit.writeEvent({
+        action: SECURITY_AUDIT_ACTIONS.uploadRejected,
+        entityType: 'security_event',
+        entityId: input.ownerId,
+        actor: { actorId: input.ownerId, actorRole: input.actorRole },
+        message: 'Document upload rejected',
+        metadata: {},
+        organizationId: input.organizationId ?? null
+      });
+      throw error;
     }
 
     const provider = this.extraction.resolveProvider(null) as ExtractionProvider;
@@ -317,8 +370,8 @@ export class DocumentsService {
         ownerId: input.ownerId,
         organizationId: input.organizationId ?? null,
         originalFilename: input.originalFilename,
-        contentType: input.contentType,
-        sizeBytes: input.sizeBytes,
+        contentType: upload.contentType,
+        sizeBytes: upload.sizeBytes,
         storageDriver: this.storage.getDriver(),
         storageKey: '',
         status: 'uploaded',
@@ -327,14 +380,24 @@ export class DocumentsService {
         category: input.category ?? null,
         tags: parseTags(input.tags),
         claimIntent: input.claimIntent ?? null,
-        documentType: input.documentType ?? (input.contentType === 'application/pdf' ? 'receipt_pdf' : 'receipt'),
-        extractionSummary: { provider, stage: 'queued', pipelineVersion: this.extraction.getPipelineVersion() }
+        documentType: input.documentType ?? (upload.contentType === 'application/pdf' ? 'receipt_pdf' : 'receipt'),
+        pageCount: upload.pageCount,
+        extractionSummary: {
+          provider,
+          stage: 'queued',
+          pipelineVersion: this.extraction.getPipelineVersion(),
+          upload: {
+            detectedContentType: upload.contentType,
+            extension: upload.extension,
+            imageDimensions: upload.imageDimensions
+          }
+        }
       }
     });
 
     const { storageKey, objectRef } = await this.storage.saveUploadedDocumentFile({
       documentId: document.id,
-      contentType: input.contentType,
+      contentType: upload.contentType,
       body: input.body,
       originalFilename: input.originalFilename
     });
@@ -413,30 +476,56 @@ export class DocumentsService {
   }
 
   async retryExtraction(input: { documentId: string; ownerId: string; actorRole: string; provider?: string | null }) {
-    const document = await this.prisma.document.findUnique({
-      where: { id: input.documentId },
+    const actor = { id: input.ownerId, role: input.actorRole };
+    const document = await this.scoped.findDocument(actor, input.documentId, {
       include: { claim: true }
     });
 
     if (!document) {
+      if (await this.scoped.documentExists(input.documentId)) {
+        throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
+      }
       throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
     }
 
-    if (document.ownerId !== input.ownerId) {
-      throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
-    }
-
     if (document.claim && document.claim.status !== 'draft') {
+      await this.audit.writeEvent({
+        action: SECURITY_AUDIT_ACTIONS.extractionRetryDenied,
+        entityType: 'security_event',
+        entityId: document.id,
+        actor: { actorId: input.ownerId, actorRole: input.actorRole },
+        message: 'Extraction retry denied',
+        metadata: { reason: 'claim_not_draft' },
+        documentId: document.id,
+        organizationId: document.organizationId
+      });
       throwContractHttpError(409, 'CONFLICT', 'Conflict', [
         { path: 'documentId', message: 'Cannot retry extraction after claim submission' }
       ]);
     }
 
     if (document.status === 'queued' || document.status === 'processing') {
+      await this.audit.writeEvent({
+        action: SECURITY_AUDIT_ACTIONS.extractionRetryDenied,
+        entityType: 'security_event',
+        entityId: document.id,
+        actor: { actorId: input.ownerId, actorRole: input.actorRole },
+        message: 'Extraction retry denied',
+        metadata: { reason: 'extraction_in_progress' },
+        documentId: document.id,
+        organizationId: document.organizationId
+      });
       throwContractHttpError(409, 'CONFLICT', 'Conflict', [
         { path: 'documentId', message: `Cannot retry extraction while status is ${document.status}` }
       ]);
     }
+
+    await this.assertExtractionRetryLimit({
+      documentId: document.id,
+      actorId: input.ownerId,
+      actorRole: input.actorRole,
+      organizationId: document.organizationId
+    });
 
     const provider = this.resolveProviderForRequest(input.provider) as ExtractionProvider;
 
@@ -618,8 +707,8 @@ export class DocumentsService {
   }
 
   async getById(input: { userId: string; role: string; organizationId?: string | null; id: string }) {
-    const document = await this.prisma.document.findUnique({
-      where: { id: input.id },
+    const actor = { id: input.userId, role: input.role, organizationId: input.organizationId ?? null };
+    const document = await this.scoped.findDocument(actor, input.id, {
       include: {
         fields: true,
         extractionJobs: { orderBy: { createdAt: 'desc' }, take: 1, include: { artifact: true } },
@@ -629,14 +718,11 @@ export class DocumentsService {
     });
 
     if (!document) {
+      if (input.role !== 'consumer' && await this.scoped.documentExists(input.id)) {
+        throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
+      }
       throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
     }
-
-    assertDocumentVisibleToActor(document, {
-      actorId: input.userId,
-      actorRole: input.role,
-      organizationId: input.organizationId ?? null
-    });
 
     const latestJob = document.extractionJobs[0] ?? null;
 
@@ -685,22 +771,32 @@ export class DocumentsService {
   }
 
   async preview(input: { userId: string; role: string; organizationId?: string | null; id: string }) {
-    const document = await this.prisma.document.findUnique({
-      where: { id: input.id },
+    const actor = { id: input.userId, role: input.role, organizationId: input.organizationId ?? null };
+    const document = await this.scoped.findDocument(actor, input.id, {
       include: { review: { select: { status: true, reviewerId: true } } }
     });
 
-    if (!document) throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
-
-    assertDocumentVisibleToActor(document, {
-      actorId: input.userId,
-      actorRole: input.role,
-      organizationId: input.organizationId ?? null
-    });
+    if (!document) {
+      if (input.role !== 'consumer' && await this.scoped.documentExists(input.id)) {
+        throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
+      }
+      throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
+    }
 
     const file = await this.storage.getDocumentFile({
       storageKey: document.storageKey,
       expectedContentType: document.contentType
+    });
+
+    await this.audit.writeEvent({
+      action: SECURITY_AUDIT_ACTIONS.documentPreviewed,
+      entityType: 'document',
+      entityId: document.id,
+      actor: { actorId: input.userId, actorRole: input.role },
+      message: 'Document previewed',
+      metadata: {},
+      documentId: document.id,
+      organizationId: document.organizationId
     });
 
     return {
@@ -721,9 +817,16 @@ export class DocumentsService {
     tags?: string[];
     retentionUntil?: string | null;
   }) {
-    const document = await this.prisma.document.findUnique({ where: { id: input.documentId } });
-    if (!document) throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
-    if (document.ownerId !== input.ownerId) throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
+    const actor = { id: input.ownerId, role: input.actorRole };
+    const document = await this.scoped.findDocument(actor, input.documentId, {
+      select: { id: true, ownerId: true }
+    });
+    if (!document) {
+      if (await this.scoped.documentExists(input.documentId)) {
+        throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
+      }
+      throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
+    }
 
     const updated = await this.prisma.document.update({
       where: { id: document.id },
@@ -747,10 +850,14 @@ export class DocumentsService {
       actor: { actorId: input.ownerId, actorRole: input.actorRole },
       message: 'Document metadata updated',
       metadata: {
-        label: input.label ?? undefined,
-        category: input.category ?? undefined,
-        documentType: input.documentType ?? undefined,
-        tags: input.tags ?? undefined
+        changedFields: [
+          ...(input.label !== undefined ? ['label'] : []),
+          ...(input.notes !== undefined ? ['notes'] : []),
+          ...(input.category !== undefined ? ['category'] : []),
+          ...(input.documentType !== undefined ? ['documentType'] : []),
+          ...(input.tags !== undefined ? ['tags'] : []),
+          ...(input.retentionUntil !== undefined ? ['retentionUntil'] : [])
+        ]
       },
       documentId: document.id
     });
@@ -788,12 +895,10 @@ export class DocumentsService {
   }
 
   async duplicates(input: { userId: string; id: string }) {
-    const document = await this.prisma.document.findUnique({
-      where: { id: input.id },
+    const document = await this.scoped.findDocument({ id: input.userId, role: 'consumer' }, input.id, {
       include: { fields: true }
     });
     if (!document) throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
-    if (document.ownerId !== input.userId) throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
 
     const fingerprint =
       document.duplicateFingerprint ??
@@ -1013,17 +1118,16 @@ export class DocumentsService {
       throwValidationError([{ path: 'fields', message: 'fields is required' }]);
     }
 
-    const document = await this.prisma.document.findUnique({
-      where: { id: input.documentId },
+    const actor = { id: input.ownerId, role: input.actorRole };
+    const document = await this.scoped.findDocument(actor, input.documentId, {
       include: { claim: true }
     });
 
     if (!document) {
+      if (await this.scoped.documentExists(input.documentId)) {
+        throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
+      }
       throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
-    }
-
-    if (document.ownerId !== input.ownerId) {
-      throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
     }
 
     if (document.status !== 'extracted' && document.status !== 'correction_required' && document.status !== 'corrected') {
@@ -1113,20 +1217,19 @@ export class DocumentsService {
   }
 
   async deleteDocument(input: { documentId: string; userId: string; role: string; organizationId?: string | null }) {
+    const actor = { id: input.userId, role: input.role, organizationId: input.organizationId ?? null };
     // Step 1: Pre-fetch for auth + claim check (before transaction)
-    const document = await this.prisma.document.findUnique({
-      where: { id: input.documentId },
+    const document = await this.scoped.findDocument(actor, input.documentId, {
       include: {
         claim: { select: { id: true, status: true } }
       }
     });
 
     if (!document) {
+      if (await this.scoped.documentExists(input.documentId)) {
+        throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
+      }
       throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
-    }
-
-    if (!isSystemAdminRole(input.role) && document.ownerId !== input.userId) {
-      throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
     }
 
     // Step 2: Block deletion of documents with active claims
@@ -1139,10 +1242,9 @@ export class DocumentsService {
     // Step 3: Database deletion in transaction
     await this.prisma.$transaction(async (tx) => {
       // Re-check claim status inside transaction (concurrency safety)
-      const current = await tx.document.findUnique({
-        where: { id: input.documentId },
+      const current = await this.scoped.findDocument(actor, input.documentId, {
         include: { claim: { select: { id: true, status: true } } }
-      });
+      }, tx);
 
       if (!current) {
         throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
@@ -1163,7 +1265,7 @@ export class DocumentsService {
       await tx.document.delete({ where: { id: input.documentId } });
     });
 
-    // Step 4: Best-effort storage cleanup (AFTER transaction — never inside)
+    // Step 4: Best-effort storage cleanup after the transaction, never inside it.
     await this.storage.deleteDocumentFile(document.storageKey);
 
     // Step 5: Audit
@@ -1177,8 +1279,6 @@ export class DocumentsService {
         metadata: {
           deletedDocumentId: input.documentId,
           deletedClaimId: document.claim.id,
-          originalFilename: document.originalFilename,
-          storageKey: document.storageKey,
           storageDriver: document.storageDriver
         },
         organizationId: document.organizationId,
@@ -1192,8 +1292,6 @@ export class DocumentsService {
       message: 'Document deleted',
       metadata: {
         deletedDocumentId: input.documentId,
-        originalFilename: document.originalFilename,
-        storageKey: document.storageKey,
         storageDriver: document.storageDriver,
         deletedClaimId: document.claim?.id ?? null,
         claimStatus: document.claim?.status ?? null
@@ -1218,11 +1316,19 @@ export class DocumentsService {
       return { deletedCount: 0, claimCount: 0 };
     }
 
+    await this.audit.writeEvent({
+      action: SECURITY_AUDIT_ACTIONS.adminActionAttempted,
+      entityType: 'security_event',
+      entityId: 'documents.bulk_delete',
+      actor: { actorId: input.userId, actorRole: input.role },
+      message: 'System administrator bulk document deletion attempted',
+      metadata: { operation: 'documents.bulk_delete', documentCount: count, claimCount }
+    });
+
     // Step 2: Transactional DB deletion in correct order
     await this.prisma.$transaction(async (tx) => {
       await tx.review.deleteMany();
       await tx.claim.deleteMany();
-      await tx.auditEvent.deleteMany();
       await tx.documentField.deleteMany();
       await tx.extractionJob.deleteMany();
       await tx.document.deleteMany();
@@ -1241,6 +1347,14 @@ export class DocumentsService {
       actor: { actorId: input.userId, actorRole: input.role },
       message: `Bulk delete: ${count} documents, ${claimCount} claims`,
       metadata: { count, claimCount },
+    });
+    await this.audit.writeEvent({
+      action: SECURITY_AUDIT_ACTIONS.adminActionCompleted,
+      entityType: 'security_event',
+      entityId: 'documents.bulk_delete',
+      actor: { actorId: input.userId, actorRole: input.role },
+      message: 'System administrator bulk document deletion completed',
+      metadata: { operation: 'documents.bulk_delete', documentCount: count, claimCount }
     });
 
     return { deletedCount: count, claimCount };

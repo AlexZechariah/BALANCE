@@ -2,65 +2,70 @@ import type { Request } from 'express';
 
 import { CanActivate, ExecutionContext, Inject, Injectable } from '@nestjs/common';
 
+import { SECURITY_AUDIT_ACTIONS } from '../audit/audit-event.constants';
 import { throwContractHttpError } from '../common/contract-errors';
-import { PrismaService } from '../prisma/prisma.service';
-import { JwtService } from './jwt.service';
+import { apiMetrics, requestRouteTemplate } from '../observability/metrics';
+import { AuthSecurityAuditService } from './auth-security-audit.service';
+import { CSRF_HEADER_NAME, MUTATING_HTTP_METHODS } from './session.constants';
+import { SessionCookieService } from './session-cookie.service';
+import { SessionService } from './session.service';
 
 export type AuthenticatedRequestUser = {
   id: string;
   role: string;
   email: string;
   organizationId: string | null;
+  emailVerifiedAt: Date | null;
 };
-
-function bearerTokenFromHeader(value: string | undefined): string | null {
-  if (!value) return null;
-  const trimmed = value.trim();
-  if (!trimmed.toLowerCase().startsWith('bearer ')) return null;
-  const token = trimmed.slice('bearer '.length).trim();
-  return token.length > 0 ? token : null;
-}
 
 @Injectable()
 export class AuthGuard implements CanActivate {
   constructor(
-    @Inject(JwtService) private readonly jwt: JwtService,
-    @Inject(PrismaService) private readonly prisma: PrismaService
+    @Inject(SessionService) private readonly sessions: SessionService,
+    @Inject(SessionCookieService) private readonly cookies: SessionCookieService,
+    @Inject(AuthSecurityAuditService) private readonly audit: AuthSecurityAuditService
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
 
-    const token = bearerTokenFromHeader(request.headers.authorization);
-    if (!token) {
+    const sessionToken = this.cookies.sessionTokenFromRequest(request);
+    if (!sessionToken) {
+      apiMetrics.recordAuthFailure('AUTH_REQUIRED');
       throwContractHttpError(401, 'AUTH_REQUIRED', 'Authentication required', []);
     }
 
+    let session: Awaited<ReturnType<SessionService['validateSession']>>;
     try {
-      const payload = await this.jwt.verify(token);
-      if (!payload.sub) {
-        throw new Error('Invalid payload');
-      }
-
-      const user = await this.prisma.user.findUnique({
-        where: { id: payload.sub },
-        select: { id: true, role: true, email: true, organizationId: true }
-      });
-
-      if (!user) {
-        throw new Error('Deleted user');
-      }
-
-      (request as unknown as { user: AuthenticatedRequestUser }).user = {
-        id: user.id,
-        role: user.role,
-        email: user.email,
-        organizationId: user.organizationId
-      };
-
-      return true;
-    } catch {
-      throwContractHttpError(401, 'AUTH_INVALID_TOKEN', 'Invalid or expired token', []);
+      session = await this.sessions.validateSession(sessionToken);
+    } catch (error) {
+      apiMetrics.recordAuthFailure('AUTH_INVALID_TOKEN');
+      throw error;
     }
+
+    if (MUTATING_HTTP_METHODS.has(request.method.toUpperCase())) {
+      const header = request.headers[CSRF_HEADER_NAME];
+      const submittedToken = Array.isArray(header) ? header[0] : header;
+      try {
+        this.sessions.validateCsrf(session, submittedToken);
+      } catch (error) {
+        apiMetrics.recordAuthFailure('CSRF_REQUIRED');
+        void this.audit.writeSecurityEvent({
+          action: SECURITY_AUDIT_ACTIONS.authCsrfFailed,
+          actor: { actorId: session.user.id, actorRole: session.user.role },
+          entityId: session.user.id,
+          message: 'CSRF validation failed',
+          metadata: {
+            method: request.method,
+            route: requestRouteTemplate(request)
+          },
+          organizationId: session.user.organizationId
+        }).catch(() => undefined);
+        throw error;
+      }
+    }
+
+    (request as unknown as { user: AuthenticatedRequestUser }).user = session.user;
+    return true;
   }
 }

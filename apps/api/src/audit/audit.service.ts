@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { EntityType, Prisma } from '@balance/db';
 
+import { redactLogPayload } from '../logging/logger.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 export type AuditActor = {
@@ -23,15 +24,17 @@ export type AuditCreateInput = {
   organizationId?: string | null;
 };
 
+type AuditClient = Prisma.TransactionClient | PrismaService;
+
 @Injectable()
 export class AuditService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
-  private async resolveOrganizationId(input: AuditCreateInput): Promise<string | null> {
+  private async resolveOrganizationId(input: AuditCreateInput, client: AuditClient): Promise<string | null> {
     if (input.organizationId !== undefined) return input.organizationId;
 
     if (input.documentId) {
-      const document = await this.prisma.document.findUnique({
+      const document = await client.document.findUnique({
         where: { id: input.documentId },
         select: { organizationId: true }
       });
@@ -39,7 +42,7 @@ export class AuditService {
     }
 
     if (input.claimId) {
-      const claim = await this.prisma.claim.findUnique({
+      const claim = await client.claim.findUnique({
         where: { id: input.claimId },
         select: { organizationId: true, document: { select: { organizationId: true } } }
       });
@@ -48,7 +51,7 @@ export class AuditService {
     }
 
     if (input.reviewId) {
-      const review = await this.prisma.review.findUnique({
+      const review = await client.review.findUnique({
         where: { id: input.reviewId },
         select: { document: { select: { organizationId: true } } }
       });
@@ -56,7 +59,7 @@ export class AuditService {
     }
 
     if (input.extractionJobId) {
-      const job = await this.prisma.extractionJob.findUnique({
+      const job = await client.extractionJob.findUnique({
         where: { id: input.extractionJobId },
         select: { document: { select: { organizationId: true } } }
       });
@@ -66,10 +69,10 @@ export class AuditService {
     return null;
   }
 
-  async writeEvent(input: AuditCreateInput): Promise<void> {
-    const organizationId = await this.resolveOrganizationId(input);
+  async writeEvent(input: AuditCreateInput, client: AuditClient = this.prisma): Promise<void> {
+    const organizationId = await this.resolveOrganizationId(input, client);
 
-    await this.prisma.auditEvent.create({
+    await client.auditEvent.create({
       data: {
         action: input.action,
         entityType: input.entityType,
@@ -77,7 +80,7 @@ export class AuditService {
         actorId: input.actor.actorId,
         actorRole: input.actor.actorRole,
         message: input.message,
-        metadata: input.metadata ?? {},
+        metadata: redactLogPayload(input.metadata ?? {}) as Prisma.InputJsonValue,
         documentId: input.documentId ?? null,
         extractionJobId: input.extractionJobId ?? null,
         claimId: input.claimId ?? null,

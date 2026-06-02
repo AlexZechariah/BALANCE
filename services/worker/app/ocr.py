@@ -48,6 +48,21 @@ def run_tesseract(image_path: str, lang: str) -> str:
     return result.stdout
 
 
+def _render_pdf_pages(file_path: str, tmpdir: str, dpi: int) -> list[Path]:
+    import fitz
+
+    matrix = fitz.Matrix(dpi / 72, dpi / 72)
+    pages: list[Path] = []
+    with fitz.open(file_path) as document:
+        for page_index in range(document.page_count):
+            page = document.load_page(page_index)
+            pixmap = page.get_pixmap(matrix=matrix, alpha=False)
+            out_path = Path(tmpdir) / f"page-{page_index + 1:06d}.png"
+            pixmap.save(out_path)
+            pages.append(out_path)
+    return pages
+
+
 def extract_text(content_type: str, file_path: str, lang: str) -> str:
     normalized = (content_type or "").lower().strip()
 
@@ -57,18 +72,8 @@ def extract_text(content_type: str, file_path: str, lang: str) -> str:
     if normalized == "application/pdf":
         # Convert PDF pages to PNGs then OCR each page.
         with tempfile.TemporaryDirectory(prefix="balance-pdf-") as tmpdir:
-            out_prefix = str(Path(tmpdir) / "page")
             dpi = _env_int("PDF_OCR_DPI", 300)
-            convert = subprocess.run(
-                ["pdftoppm", "-r", str(dpi), "-png", file_path, out_prefix],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            if convert.returncode != 0:
-                raise RuntimeError(convert.stderr.strip() or "pdftoppm failed")
-
-            pages = sorted(Path(tmpdir).glob("page-*.png"))
+            pages = _render_pdf_pages(file_path, tmpdir, dpi)
             if not pages:
                 raise RuntimeError("No pages extracted from PDF")
 
@@ -262,66 +267,3 @@ def parse_fields(text: str) -> dict[str, object]:
         "currency": currency,
         "rawTextLength": len(raw_text),
     }
-
-
-# ── Textract image preprocessing ──────────────────────────────────────
-
-def preprocess_for_textract(image_path: str) -> bytes:
-    """
-    Lightweight image preprocessing to improve Textract accuracy.
-
-    Steps:
-    1. Deskew if >3 degree rotation
-    2. Convert to grayscale
-    3. Mild contrast enhancement
-    4. Otsu binarization
-    5. Encode to PNG bytes
-
-    Controlled via TEXTRACT_PREPROCESS env var (on/off).
-    Import opencv lazily so it's an optional dependency.
-    """
-    try:
-        import cv2
-        import numpy as np
-    except ImportError:
-        # OpenCV not installed — return raw file bytes
-        with open(image_path, "rb") as f:
-            return f.read()
-
-    img = cv2.imread(image_path, cv2.IMREAD_COLOR)
-    if img is None:
-        with open(image_path, "rb") as f:
-            return f.read()
-
-    h, w = img.shape[:2]
-
-    # 1. Deskew — only if rotation is significant
-    gray_step = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _, binary_step = cv2.threshold(gray_step, 128, 255, cv2.THRESH_BINARY_INV)
-    coords = cv2.findNonZero(binary_step)
-    if coords is not None and len(coords) > 100:
-        _rect = cv2.minAreaRect(coords)
-        angle = _rect[-1]
-        if angle < -45:
-            angle = 90 + angle
-        if abs(angle) > 3.0:
-            center = (w // 2, h // 2)
-            M = cv2.getRotationMatrix2D(center, angle, 1.0)
-            img = cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_CUBIC,
-                                 borderMode=cv2.BORDER_REPLICATE)
-
-    # 2. Grayscale
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-    # 3. Mild contrast enhancement
-    enhanced = cv2.convertScaleAbs(gray, alpha=1.3, beta=10)
-
-    # 4. Otsu binarization
-    _, binary = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-
-    # 5. Encode to PNG
-    success, encoded = cv2.imencode(".png", binary)
-    if not success:
-        with open(image_path, "rb") as f:
-            return f.read()
-    return encoded.tobytes()

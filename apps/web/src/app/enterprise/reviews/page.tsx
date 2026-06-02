@@ -176,7 +176,7 @@ function ReviewQueueContent() {
                           </SelectContent>
                         </Select>
                       ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
+                        <span className="text-xs text-muted-foreground">-</span>
                       )}
                     </TableCell>
                   )}

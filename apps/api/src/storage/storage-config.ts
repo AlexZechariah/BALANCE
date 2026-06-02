@@ -14,7 +14,7 @@ export function loadStorageRuntimeConfig(env: NodeJS.ProcessEnv = process.env): 
     provider,
     filesystemRoot: (env.OBJECT_STORAGE_FILESYSTEM_ROOT || env.STORAGE_FILESYSTEM_ROOT || '/data/balance-storage').trim(),
     s3CompatibleEndpoint: (env.OBJECT_STORAGE_ENDPOINT || '').trim(),
-    s3CompatibleBucket: (env.OBJECT_STORAGE_BUCKET || env.S3_BUCKET || '').trim()
+    s3CompatibleBucket: (env.OBJECT_STORAGE_BUCKET || '').trim()
   };
 }
 

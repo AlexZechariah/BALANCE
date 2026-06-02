@@ -6,6 +6,7 @@ import { AuditService } from '../audit/audit.service';
 import { throwContractHttpError, throwValidationError } from '../common/contract-errors';
 import { effectiveDocumentAmountMinor, effectiveDocumentCategory, effectiveDocumentMonth } from '../documents/document-spend';
 import { PrismaService } from '../prisma/prisma.service';
+import { ScopedPrismaService } from '../prisma/scoped-prisma.service';
 
 function currentMonthKey(now = new Date()): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -40,6 +41,7 @@ function monthDateRange(month: string) {
 export class BudgetsService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(ScopedPrismaService) private readonly scoped: ScopedPrismaService,
     @Inject(AuditService) private readonly audit: AuditService
   ) {}
 
@@ -191,8 +193,11 @@ export class BudgetsService {
   }
 
   async update(userId: string, id: string, input: { category?: string | undefined; amountMinor?: number | undefined; currency?: string | undefined }) {
-    const existing = await this.prisma.budget.findUnique({ where: { id } });
-    if (!existing || existing.userId !== userId) {
+    const actor = { id: userId, role: 'consumer' };
+    const existing = await this.scoped.findBudget(actor, id, {
+      select: { id: true, userId: true, category: true, month: true }
+    });
+    if (!existing) {
       throwContractHttpError(404, 'NOT_FOUND', 'Budget not found', []);
     }
     const category = input.category !== undefined ? normalizeBudgetCategory(input.category) : normalizeBudgetCategory(existing.category);
@@ -226,8 +231,10 @@ export class BudgetsService {
   }
 
   async delete(userId: string, id: string) {
-    const budget = await this.prisma.budget.findUnique({ where: { id } });
-    if (!budget || budget.userId !== userId) {
+    const budget = await this.scoped.findBudget({ id: userId, role: 'consumer' }, id, {
+      select: { id: true, userId: true, category: true, month: true, amountMinor: true }
+    });
+    if (!budget) {
       throwContractHttpError(404, 'NOT_FOUND', 'Budget not found', []);
     }
 

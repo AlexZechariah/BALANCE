@@ -49,6 +49,19 @@ function warningLabel(code: string): string {
   return code.replace(/[_:]+/g, ' ');
 }
 
+export function extractionFailureLabel(code: string): string {
+  switch (code) {
+    case 'pdf_page_limit_exceeded':
+      return 'This PDF has more pages than the local extraction limit. Split the file into a smaller PDF, then upload or retry extraction.';
+    case 'image_pixel_limit_exceeded':
+      return 'This image is too large for local extraction. Resize it to fewer pixels, then upload or retry extraction.';
+    case 'extraction_failed':
+      return 'Extraction failed. Retry after checking the local worker and OCR provider.';
+    default:
+      return warningLabel(code);
+  }
+}
+
 interface MetadataFormState {
   label: string;
   category: string;
@@ -142,7 +155,7 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
   const canEditMetadata = Boolean(doc) && (isOwner || user?.role === 'admin' || user?.role === 'system_admin');
   const canClaim = !isConsumerView && isOwner && Boolean(doc) && CLAIM_ALLOWED.has(doc!.status) && (!doc!.claim || doc!.claim.status === 'draft');
 
-  // Shared doc fetcher — does NOT touch `loading` so polling doesn't flash the page.
+  // Shared doc fetcher does NOT touch `loading`, so polling does not flash the page.
   const fetchDoc = useCallback(async () => {
     try {
       const res = await getDocument(id);
@@ -159,7 +172,7 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
     }
   }, [id]);
 
-  // Initial load — sets loading true for first render
+  // Initial load sets loading true for the first render.
   const load = useCallback(async () => {
     setLoading(true);
     await fetchDoc();
@@ -190,7 +203,7 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
     };
   }, [doc, user]);
 
-  // Polling — uses fetchDoc which does NOT reset loading, so no flash
+  // Polling uses fetchDoc, which does NOT reset loading, so there is no flash.
   useEffect(() => {
     if (!doc) return;
     if (!POLLING_STATUSES.has(doc.status)) return;
@@ -338,6 +351,7 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
   const showExtractionFailure = doc.status === 'failed' || doc.extractionJob?.status === 'failed';
   const showExtractionPanel = Boolean(doc.extractionJob) || isPolling || showExtractionFailure || correctionRequired;
   const extractionError = doc.extractionJob?.errorMessage || (doc.status === 'failed' ? 'Extraction failed.' : null);
+  const extractionErrorLabel = extractionError ? extractionFailureLabel(extractionError) : null;
   const extractionErrorLower = (extractionError || '').toLowerCase();
   const looksLikeProviderDependency = extractionErrorLower.includes('provider') || extractionErrorLower.includes('ocr');
   const documentTitle = doc.label || doc.originalFilename;
@@ -424,7 +438,7 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
                   <div><p className="text-xs text-muted-foreground">Category</p><p>{categoryLabel(doc.category)}</p></div>
                   <div><p className="text-xs text-muted-foreground">Record type</p><p>{recordTypeLabel(doc.documentType)}</p></div>
                   <div><p className="text-xs text-muted-foreground">Last updated</p><p className="font-mono text-xs tabular-nums">{formatDateTime(doc.updatedAt)}</p></div>
-                  {!isConsumerView && <div><p className="text-xs text-muted-foreground">Claim</p><StatusBadge status={doc.claim?.status ?? '—'} /></div>}
+                  {!isConsumerView && <div><p className="text-xs text-muted-foreground">Claim</p><StatusBadge status={doc.claim?.status ?? '-'} /></div>}
                 </CardContent>
               </Card>
 
@@ -471,7 +485,7 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
                           style={{ animation: 'indeterminate-bar 1.5s ease-in-out infinite' }}
                         />
                       </div>
-                      <p className="text-xs text-muted-foreground">Processing — extracted fields will appear automatically.</p>
+                      <p className="text-xs text-muted-foreground">Processing; extracted fields will appear automatically.</p>
                     </>
                   )}
 
@@ -490,7 +504,7 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
                     <Alert variant="destructive">
                       <div className="grid gap-1">
                         <p className="font-medium">Extraction failed</p>
-                        {extractionError && <p className="text-sm text-destructive">{extractionError}</p>}
+                        {extractionErrorLabel && <p className="text-sm text-destructive">{extractionErrorLabel}</p>}
                         {user && ['staff', 'admin', 'system_admin'].includes(user.role) && (
                           <p className="text-xs text-muted-foreground">
                             {looksLikeProviderDependency
@@ -695,7 +709,7 @@ export function DocumentWorkspaceDetail({ backHref, documentsHref }: { backHref:
                     <CardTitle>Next Steps</CardTitle>
                   </CardHeader>
                   <CardContent className="grid gap-2 text-sm text-muted-foreground">
-                    <p>If this document looks correct, wait for extraction to complete — then review the captured fields and save any corrections.</p>
+                    <p>If this document looks correct, wait for extraction to complete, then review the captured fields and save any corrections.</p>
                     <p>If extraction fails, use <span className="font-medium text-foreground">Retry extraction</span> or upload a clearer photo/PDF.</p>
                   </CardContent>
                 </Card>

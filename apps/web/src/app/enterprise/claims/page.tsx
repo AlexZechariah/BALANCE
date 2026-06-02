@@ -206,7 +206,7 @@ function EnterpriseClaimsContent() {
                             <span className="text-xs text-muted-foreground">{claim.consumer.email}</span>
                           </div>
                         ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
+                          <span className="text-xs text-muted-foreground">-</span>
                         )}
                       </TableCell>
                     )}
@@ -220,7 +220,7 @@ function EnterpriseClaimsContent() {
                       {'review' in claim && claim.review ? (
                         <StatusBadge status={claim.review.status} />
                       ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
+                        <span className="text-xs text-muted-foreground">-</span>
                       )}
                     </TableCell>
                   </TableRow>

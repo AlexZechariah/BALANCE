@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import time
 
 from . import settings
+from .observability import record_storage_operation, start_span
 
 
 @dataclass(frozen=True)
@@ -14,17 +16,25 @@ class LocalObject:
 
 
 def fetch_job_object(job_data: dict) -> LocalObject:
+    start = time.perf_counter()
     object_ref = job_data.get("objectRef") or {}
     provider = str(object_ref.get("provider") or job_data.get("storageDriver") or settings.OBJECT_STORAGE_PROVIDER or "filesystem")
     provider = provider.strip()
-    key = str(object_ref.get("key") or job_data.get("storageKey") or "").strip()
-    if not key:
-        raise RuntimeError("missing object storage key")
+    try:
+        with start_span("worker.storage.read", {"balance.worker.storage_provider": provider}):
+            key = str(object_ref.get("key") or job_data.get("storageKey") or "").strip()
+            if not key:
+                raise RuntimeError("missing object storage key")
 
-    if provider in {"filesystem", "legacy_filesystem"}:
-        return LocalObject(path=str(_resolve_local_key(key)), key=key.replace("\\", "/").lstrip("/"), provider="filesystem")
+            if provider in {"filesystem", "legacy_filesystem"}:
+                result = LocalObject(path=str(_resolve_local_key(key)), key=key.replace("\\", "/").lstrip("/"), provider="filesystem")
+                record_storage_operation("read", "filesystem", "success", time.perf_counter() - start)
+                return result
 
-    raise RuntimeError(f"Object storage provider '{provider}' is not active in the v0.5 local worker")
+            raise RuntimeError(f"Object storage provider '{provider}' is not active in the v0.5 local worker")
+    except Exception as exc:
+        record_storage_operation("read", provider, "failure", time.perf_counter() - start, exc)
+        raise
 
 
 def _resolve_local_key(key: str) -> Path:

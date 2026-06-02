@@ -18,6 +18,7 @@ import {
 import { ThemeToggle } from './theme-toggle';
 import { cn } from '@/lib/utils';
 import { AppFooter } from './system/app-footer';
+import { EmailVerificationNotice } from './security/email-verification-notice';
 
 export function ConsumerLayout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
@@ -102,7 +103,10 @@ export function ConsumerLayout({ children }: { children: ReactNode }) {
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-7xl px-4 py-6 pb-24 lg:px-6 md:pb-6 flex-1 w-full">{children}</main>
+      <main className="mx-auto max-w-7xl px-4 py-6 pb-24 lg:px-6 md:pb-6 flex-1 w-full">
+        <EmailVerificationNotice />
+        {children}
+      </main>
       <AppFooter />
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 px-2 py-2 shadow-lg backdrop-blur md:hidden" aria-label="Consumer navigation">
         <div className="grid grid-cols-4 gap-1">

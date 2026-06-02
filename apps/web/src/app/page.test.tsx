@@ -23,6 +23,16 @@ afterEach(() => {
   process.env = { ...originalEnv };
 });
 
+function setDeploymentEnvironment(appEnv: 'staging' | 'production') {
+  process.env.APP_ENV = appEnv;
+  process.env.TRUST_PROXY = 'loopback';
+  process.env.COOKIE_SECURE = 'true';
+  process.env.CORS_ORIGINS = 'https://app.balance.example';
+  process.env.EXTERNAL_WEB_ORIGIN = 'https://app.balance.example';
+  process.env.DATABASE_URL = 'postgresql://balance:test-secret@db.internal:5432/balance?schema=public';
+  process.env.REDIS_URL = 'redis://default:test-secret@redis.internal:6379';
+}
+
 describe('HomePage (live landing page)', () => {
   it('renders the landing page header and hero content', () => {
     const html = renderToStaticMarkup(<HomePage />);
@@ -44,7 +54,7 @@ describe('HomePage (live landing page)', () => {
 
 describe('RoutePlaceholderShell', () => {
   it('renders the home experience with routing and proxy-friendly API paths', () => {
-    process.env.APP_ENV = 'staging';
+    setDeploymentEnvironment('staging');
     process.env.API_PROXY_TARGET = 'http://api:3001';
     process.env.NEXT_PUBLIC_API_HEALTH_PATH = '/gateway/health';
     process.env.NEXT_PUBLIC_API_VERSION_PATH = '/gateway/version';
@@ -72,7 +82,7 @@ describe('RoutePlaceholderShell', () => {
   });
 
   it('renders the login placeholder route', () => {
-    process.env.APP_ENV = 'production';
+    setDeploymentEnvironment('production');
     process.env.OBJECT_STORAGE_PROVIDER = 'filesystem';
     process.env.STORAGE_DRIVER = 'filesystem';
 

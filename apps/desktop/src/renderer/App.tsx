@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { clearToken, getToken, DesktopApiError } from './lib/api/client';
+import { DesktopApiError } from './lib/api/client';
 import { desktopLogin, desktopGetCurrentUser, desktopLogout } from './lib/api/auth';
 import type { DesktopUser } from './lib/api/auth';
 import {
@@ -68,16 +68,18 @@ function AppWithState() {
   const [selectedReviewId, setSelectedReviewId] = useState<string | null>(null);
 
   useEffect(() => {
-    const token = getToken();
-    if (!token) { setAuthLoading(false); return; }
     desktopGetCurrentUser()
-      .then((u) => {
-        if (u.role === 'consumer') { clearToken(); setAuthLoading(false); return; }
+      .then(async (u) => {
+        if (u.role === 'consumer') {
+          await desktopLogout().catch(() => undefined);
+          setAuthLoading(false);
+          return;
+        }
         setUser(u);
         setScreen('queue');
         setAuthLoading(false);
       })
-      .catch(() => { clearToken(); setAuthLoading(false); });
+      .catch(() => { setAuthLoading(false); });
   }, []);
 
   async function handleLogout() {
@@ -144,7 +146,7 @@ function LoginScreen({ onSuccess }: { onSuccess: (u: DesktopUser) => void }) {
     try {
       const u = await desktopLogin(email.trim(), password);
       if (u.role === 'consumer') {
-        clearToken();
+        await desktopLogout().catch(() => undefined);
         setError('This client is for reviewers and admins only.');
         return;
       }
@@ -238,7 +240,7 @@ function QueueScreen({ user, onLogout, onSelectReview }: {
             <div style={{ minWidth:0 }}>
               <p style={{ margin:'0 0 4px', fontSize:13, fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{review.originalFilename}</p>
               <p style={{ margin:0, fontSize:11, color:'#64748b' }}>
-                {review.consumerName} · {review.merchantName ?? '—'}
+                {review.consumerName} · {review.merchantName ?? '-'}
                 {review.amountMinor != null ? ` · ${(review.amountMinor / 100).toFixed(2)} ${review.currency ?? ''}` : ''}
               </p>
             </div>

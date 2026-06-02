@@ -1,6 +1,7 @@
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { SECURITY_AUDIT_ACTIONS } from '../src/audit/audit-event.constants';
 import {
   auth,
   closeTestContext,
@@ -9,6 +10,7 @@ import {
   ensureSeedUsers,
   login,
   resetWorkflowData,
+  sessionFromResponse,
   type TestContext
 } from './helpers/backend-app';
 
@@ -39,11 +41,11 @@ describe.sequential('Balance API backend workflow', () => {
     const consumer = await login(ctx.app, 'consumer');
     expect(consumer.response.status).toBe(200);
     expect(consumer.response.body.user.role).toBe('consumer');
-    expect(consumer.token).toEqual(expect.any(String));
+    expect(consumer.session.csrfToken).toEqual(expect.any(String));
 
     await request(ctx.app.getHttpServer())
       .get('/auth/me')
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .expect(200)
       .expect((response) => {
         expect(response.body.user.email).toBe('consumer@balance.local');
@@ -53,13 +55,13 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .get('/reviews/queue')
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .expect(403);
 
     const reviewer = await login(ctx.app, 'reviewer');
     await request(ctx.app.getHttpServer())
       .post('/documents')
-      .set('Authorization', auth(reviewer.token))
+      .use(auth(reviewer.session))
       .expect(403);
 
     const otherDocument = await createDocument(ctx.prisma, {
@@ -69,7 +71,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .get(`/documents/${otherDocument.id}`)
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .expect(404);
   });
 
@@ -81,7 +83,7 @@ describe.sequential('Balance API backend workflow', () => {
       .post('/auth/register')
       .send({
         email: `owner-${suffix}@balance.local`,
-        password: 'ValidPass1!',
+        password: 'valid local passphrase 1',
         displayName: 'Acme Owner',
         orgName
       })
@@ -92,7 +94,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .get('/auth/me')
-      .set('Authorization', auth(registered.body.accessToken))
+      .use(auth(sessionFromResponse(registered)))
       .expect(200)
       .expect((response) => {
         expect(response.body.user.organizationId).toBe(registered.body.user.organizationId);
@@ -102,7 +104,7 @@ describe.sequential('Balance API backend workflow', () => {
       .post('/auth/register')
       .send({
         email: `other-${suffix}@balance.local`,
-        password: 'ValidPass1!',
+        password: 'valid local passphrase 1',
         displayName: 'Other Owner',
         orgName
       })
@@ -121,14 +123,14 @@ describe.sequential('Balance API backend workflow', () => {
       .post('/auth/register')
       .send({
         email: initialEmail,
-        password: 'ValidPass1!',
+        password: 'valid local passphrase 1',
         displayName: 'Settings User'
       })
       .expect(201);
 
     await request(ctx.app.getHttpServer())
       .patch('/auth/me')
-      .set('Authorization', auth(registered.body.accessToken))
+      .use(auth(sessionFromResponse(registered)))
       .send({ displayName: 'Updated Settings User' })
       .expect(200)
       .expect((response) => {
@@ -138,20 +140,20 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .patch('/auth/me')
-      .set('Authorization', auth(registered.body.accessToken))
+      .use(auth(sessionFromResponse(registered)))
       .send({ email: updatedEmail })
       .expect(422);
 
     await request(ctx.app.getHttpServer())
       .patch('/auth/me')
-      .set('Authorization', auth(registered.body.accessToken))
+      .use(auth(sessionFromResponse(registered)))
       .send({ email: updatedEmail, currentPassword: 'WrongPass1!' })
       .expect(401);
 
     await request(ctx.app.getHttpServer())
       .patch('/auth/me')
-      .set('Authorization', auth(registered.body.accessToken))
-      .send({ email: updatedEmail, currentPassword: 'ValidPass1!', newPassword: 'NextPass1!' })
+      .use(auth(sessionFromResponse(registered)))
+      .send({ email: updatedEmail, currentPassword: 'valid local passphrase 1', newPassword: 'next local passphrase 1' })
       .expect(200)
       .expect((response) => {
         expect(response.body.user.email).toBe(updatedEmail);
@@ -159,13 +161,39 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .post('/auth/login')
-      .send({ email: updatedEmail, password: 'ValidPass1!' })
+      .send({ email: updatedEmail, password: 'valid local passphrase 1' })
       .expect(401);
 
     await request(ctx.app.getHttpServer())
       .post('/auth/login')
-      .send({ email: updatedEmail, password: 'NextPass1!' })
+      .send({ email: updatedEmail, password: 'next local passphrase 1' })
       .expect(200);
+  });
+
+  it('returns the bounded large-PDF warning through the document detail API', async () => {
+    const consumer = await login(ctx.app, 'consumer');
+    const document = await createDocument(ctx.prisma, {
+      ownerId: consumer.user.id,
+      status: 'failed'
+    });
+    await ctx.prisma.extractionJob.create({
+      data: {
+        documentId: document.id,
+        status: 'failed',
+        provider: 'paddleocr',
+        warningCodes: ['pdf_page_limit_exceeded'],
+        errorMessage: 'pdf_page_limit_exceeded'
+      }
+    });
+
+    await request(ctx.app.getHttpServer())
+      .get(`/documents/${document.id}`)
+      .use(auth(consumer.session))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.document.extractionJob.warningCodes).toContain('pdf_page_limit_exceeded');
+        expect(response.body.document.extractionJob.errorMessage).toBe('pdf_page_limit_exceeded');
+      });
   });
 
   it('proves enterprise member and global admin boundaries', async () => {
@@ -174,7 +202,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .post('/enterprise/members')
-      .set('Authorization', auth(orgAdmin.token))
+      .use(auth(orgAdmin.session))
       .send({
         email: `weak-${Date.now()}@balance.local`,
         password: 'password',
@@ -185,17 +213,17 @@ describe.sequential('Balance API backend workflow', () => {
     // Cannot demote the last admin (including yourself).
     await request(ctx.app.getHttpServer())
       .patch(`/enterprise/members/${orgAdmin.user.id}/role`)
-      .set('Authorization', auth(orgAdmin.token))
+      .use(auth(orgAdmin.session))
       .send({ role: 'staff' })
       .expect(409);
 
     const staffEmail = `staff-${Date.now()}@balance.local`;
     const created = await request(ctx.app.getHttpServer())
       .post('/enterprise/members')
-      .set('Authorization', auth(orgAdmin.token))
+      .use(auth(orgAdmin.session))
       .send({
         email: staffEmail,
-        password: 'ValidPass1!',
+        password: 'valid local passphrase 1',
         displayName: 'Team Staff',
         role: 'staff'
       })
@@ -210,10 +238,10 @@ describe.sequential('Balance API backend workflow', () => {
     const adminEmail = `admin-${Date.now()}@balance.local`;
     const createdAdmin = await request(ctx.app.getHttpServer())
       .post('/enterprise/members')
-      .set('Authorization', auth(orgAdmin.token))
+      .use(auth(orgAdmin.session))
       .send({
         email: adminEmail,
-        password: 'ValidPass1!',
+        password: 'valid local passphrase 1',
         displayName: 'Team Admin',
         role: 'admin'
       })
@@ -227,7 +255,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .get('/enterprise/members')
-      .set('Authorization', auth(orgAdmin.token))
+      .use(auth(orgAdmin.session))
       .expect(200)
       .expect((response) => {
         expect(response.body.members.some((member: { email: string }) => member.email === staffEmail)).toBe(true);
@@ -236,7 +264,7 @@ describe.sequential('Balance API backend workflow', () => {
     const editedStaffEmail = `edited-${staffEmail}`;
     await request(ctx.app.getHttpServer())
       .patch(`/enterprise/members/${created.body.member.id}`)
-      .set('Authorization', auth(orgAdmin.token))
+      .use(auth(orgAdmin.session))
       .send({ displayName: 'Updated Team Staff', email: editedStaffEmail, role: 'reviewer' })
       .expect(200)
       .expect((response) => {
@@ -248,37 +276,45 @@ describe.sequential('Balance API backend workflow', () => {
         });
       });
 
+    const staffAgent = request.agent(ctx.app.getHttpServer());
+    await staffAgent.post('/auth/login').send({
+      email: editedStaffEmail,
+      password: 'valid local passphrase 1'
+    }).expect(200);
+
     await request(ctx.app.getHttpServer())
       .patch(`/enterprise/members/${created.body.member.id}/password`)
-      .set('Authorization', auth(orgAdmin.token))
-      .send({ password: 'ResetPass1!' })
+      .use(auth(orgAdmin.session))
+      .send({ password: 'reset local passphrase 1' })
       .expect(200);
 
     await request(ctx.app.getHttpServer())
       .post('/auth/login')
-      .send({ email: editedStaffEmail, password: 'ValidPass1!' })
+      .send({ email: editedStaffEmail, password: 'valid local passphrase 1' })
       .expect(401);
+
+    await staffAgent.get('/auth/me').expect(401);
 
     await request(ctx.app.getHttpServer())
       .post('/auth/login')
-      .send({ email: editedStaffEmail, password: 'ResetPass1!' })
+      .send({ email: editedStaffEmail, password: 'reset local passphrase 1' })
       .expect(200);
 
     await request(ctx.app.getHttpServer())
       .patch(`/enterprise/members/${orgAdmin.user.id}/password`)
-      .set('Authorization', auth(orgAdmin.token))
-      .send({ password: 'ResetPass1!' })
+      .use(auth(orgAdmin.session))
+      .send({ password: 'reset local passphrase 1' })
       .expect(403);
 
     await request(ctx.app.getHttpServer())
       .delete(`/enterprise/members/${orgAdmin.user.id}`)
-      .set('Authorization', auth(orgAdmin.token))
+      .use(auth(orgAdmin.session))
       .expect(403);
 
     // Role updates: promote/demote with "last admin" guard.
     await request(ctx.app.getHttpServer())
       .patch(`/enterprise/members/${created.body.member.id}/role`)
-      .set('Authorization', auth(orgAdmin.token))
+      .use(auth(orgAdmin.session))
       .send({ role: 'admin' })
       .expect(200)
       .expect((response) => {
@@ -287,7 +323,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .patch(`/enterprise/members/${created.body.member.id}/role`)
-      .set('Authorization', auth(orgAdmin.token))
+      .use(auth(orgAdmin.session))
       .send({ role: 'staff' })
       .expect(200)
       .expect((response) => {
@@ -297,13 +333,13 @@ describe.sequential('Balance API backend workflow', () => {
     // Demoting a non-last admin is allowed.
     await request(ctx.app.getHttpServer())
       .patch(`/enterprise/members/${createdAdmin.body.member.id}/role`)
-      .set('Authorization', auth(orgAdmin.token))
+      .use(auth(orgAdmin.session))
       .send({ role: 'staff' })
       .expect(200);
 
     await request(ctx.app.getHttpServer())
       .get('/audit/summary')
-      .set('Authorization', auth(orgAdmin.token))
+      .use(auth(orgAdmin.session))
       .expect(200)
       .expect((res) => {
         expect(res.body.summary).toBeDefined();
@@ -312,13 +348,38 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .get('/audit/summary')
-      .set('Authorization', auth(systemAdmin.token))
+      .use(auth(systemAdmin.session))
       .expect(200);
 
     await request(ctx.app.getHttpServer())
       .delete('/documents')
-      .set('Authorization', auth(orgAdmin.token))
+      .use(auth(orgAdmin.session))
       .expect(403);
+
+    await request(ctx.app.getHttpServer())
+      .delete(`/enterprise/members/${created.body.member.id}`)
+      .use(auth(orgAdmin.session))
+      .expect(200);
+
+    const memberActions = await ctx.prisma.auditEvent.findMany({
+      where: {
+        action: {
+          in: [
+            SECURITY_AUDIT_ACTIONS.memberInvited,
+            SECURITY_AUDIT_ACTIONS.memberRoleChanged,
+            SECURITY_AUDIT_ACTIONS.memberRemoved
+          ]
+        },
+        organizationId: orgAdmin.user.organizationId
+      }
+    });
+    expect(memberActions.map((event) => event.action)).toEqual(expect.arrayContaining([
+      SECURITY_AUDIT_ACTIONS.memberInvited,
+      SECURITY_AUDIT_ACTIONS.memberRoleChanged,
+      SECURITY_AUDIT_ACTIONS.memberRemoved
+    ]));
+    expect(JSON.stringify(memberActions.map((event) => event.metadata))).not.toContain(staffEmail);
+    expect(JSON.stringify(memberActions.map((event) => event.metadata))).not.toContain('valid local passphrase 1');
   });
 
   it('proves enterprise staff cannot access review queue endpoints (admin-only)', async () => {
@@ -328,7 +389,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     const upload = await request(ctx.app.getHttpServer())
       .post('/documents')
-      .set('Authorization', auth(staff.token))
+      .use(auth(staff.session))
       .field('label', 'Staff review receipt')
       .field('category', 'software')
       .attach('file', Buffer.from('%PDF-1.4\n% Balance staff test\n'), {
@@ -353,7 +414,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     const claim = await request(ctx.app.getHttpServer())
       .post('/claims')
-      .set('Authorization', auth(staff.token))
+      .use(auth(staff.session))
       .send({ documentId, purpose: 'Reimbursement', note: 'Team meal' })
       .expect(201);
 
@@ -366,28 +427,28 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .get('/reviews/queue')
-      .set('Authorization', auth(staff.token))
+      .use(auth(staff.session))
       .expect(403);
 
     await request(ctx.app.getHttpServer())
       .get(`/reviews/${reviewId}`)
-      .set('Authorization', auth(staff.token))
+      .use(auth(staff.session))
       .expect(403);
 
     await request(ctx.app.getHttpServer())
       .post(`/reviews/${reviewId}/approve`)
-      .set('Authorization', auth(staff.token))
+      .use(auth(staff.session))
       .send({ note: 'Staff should not decide' })
       .expect(403);
 
     await request(ctx.app.getHttpServer())
       .post(`/reviews/${reviewId}/claim`)
-      .set('Authorization', auth(orgAdmin.token))
+      .use(auth(orgAdmin.session))
       .expect(200);
 
     await request(ctx.app.getHttpServer())
       .post(`/reviews/${reviewId}/approve`)
-      .set('Authorization', auth(orgAdmin.token))
+      .use(auth(orgAdmin.session))
       .send({ note: 'Org admin approved' })
       .expect(200);
 
@@ -395,7 +456,7 @@ describe.sequential('Balance API backend workflow', () => {
       .post('/auth/register')
       .send({
         email: `other-admin-${suffix}@balance.local`,
-        password: 'ValidPass1!',
+        password: 'valid local passphrase 1',
         displayName: 'Other Admin',
         orgName: `Other Org ${suffix}`
       })
@@ -403,7 +464,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .get(`/reviews/${reviewId}`)
-      .set('Authorization', auth(otherOrg.body.accessToken))
+      .use(auth(sessionFromResponse(otherOrg)))
       .expect(403);
 
     const otherOrgDocument = await createDocument(ctx.prisma, {
@@ -429,17 +490,41 @@ describe.sequential('Balance API backend workflow', () => {
 
     const orgSummary = await request(ctx.app.getHttpServer())
       .get('/audit/summary')
-      .set('Authorization', auth(orgAdmin.token))
+      .use(auth(orgAdmin.session))
       .expect(200);
 
     await request(ctx.app.getHttpServer())
       .get('/audit')
-      .set('Authorization', auth(orgAdmin.token))
+      .use(auth(orgAdmin.session))
       .expect(200)
       .expect((response) => {
         expect(response.body.page.total).toBe(orgSummary.body.summary.total);
         expect(response.body.auditEvents.some((event: { entityId: string }) => event.entityId === otherOrgDocument.id)).toBe(false);
       });
+  });
+
+  it('retains bounded attempted and completed audit events around system-admin bulk document deletion', async () => {
+    const consumer = await login(ctx.app, 'consumer');
+    const systemAdmin = await login(ctx.app, 'admin');
+    await createDocument(ctx.prisma, { ownerId: consumer.user.id, status: 'extracted' });
+
+    await request(ctx.app.getHttpServer())
+      .delete('/documents')
+      .use(auth(systemAdmin.session))
+      .expect(200);
+
+    const actions = await ctx.prisma.auditEvent.findMany({
+      where: {
+        entityId: 'documents.bulk_delete',
+        action: { in: [SECURITY_AUDIT_ACTIONS.adminActionAttempted, SECURITY_AUDIT_ACTIONS.adminActionCompleted] }
+      },
+      orderBy: { createdAt: 'asc' }
+    });
+    expect(actions.map((event) => event.action)).toEqual([
+      SECURITY_AUDIT_ACTIONS.adminActionAttempted,
+      SECURITY_AUDIT_ACTIONS.adminActionCompleted
+    ]);
+    expect(actions.every((event) => JSON.stringify(event.metadata).includes('"operation":"documents.bulk_delete"'))).toBe(true);
   });
 
   it('proves enterprise recall flow (submitted -> draft -> resubmit) and org-wide admin lists', async () => {
@@ -454,7 +539,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     const submitted = await request(ctx.app.getHttpServer())
       .post('/claims')
-      .set('Authorization', auth(staff.token))
+      .use(auth(staff.session))
       .send({ documentId: doc.id, purpose: 'Reimbursement', note: 'First pass' })
       .expect(201);
 
@@ -463,7 +548,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .get('/enterprise/claims')
-      .set('Authorization', auth(orgAdmin.token))
+      .use(auth(orgAdmin.session))
       .expect(200)
       .expect((response) => {
         expect(response.body.claims.some((c: { id: string }) => c.id === claimId)).toBe(true);
@@ -472,7 +557,7 @@ describe.sequential('Balance API backend workflow', () => {
     // Recall is allowed only while review is pending and unclaimed.
     await request(ctx.app.getHttpServer())
       .post(`/claims/${claimId}/recall`)
-      .set('Authorization', auth(staff.token))
+      .use(auth(staff.session))
       .expect(200)
       .expect((response) => {
         expect(response.body.claim.status).toBe('draft');
@@ -490,7 +575,7 @@ describe.sequential('Balance API backend workflow', () => {
     // Resubmit updates the existing draft claim and creates a new review.
     const resubmitted = await request(ctx.app.getHttpServer())
       .post('/claims')
-      .set('Authorization', auth(staff.token))
+      .use(auth(staff.session))
       .send({ documentId: doc.id, purpose: 'Reimbursement', note: 'Second pass' })
       .expect(201);
 
@@ -506,7 +591,7 @@ describe.sequential('Balance API backend workflow', () => {
     // Org admin can see the resubmitted claim in org-wide list.
     await request(ctx.app.getHttpServer())
       .get('/enterprise/claims')
-      .set('Authorization', auth(orgAdmin.token))
+      .use(auth(orgAdmin.session))
       .expect(200)
       .expect((response) => {
         const match = response.body.claims.find((c: { id: string }) => c.id === claimId);
@@ -520,7 +605,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     const upload = await request(ctx.app.getHttpServer())
       .post('/documents')
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .field('label', 'Travel receipt')
       .field('notes', 'Taxi from airport')
       .field('documentType', 'tax')
@@ -554,7 +639,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .get('/documents')
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .expect(200)
       .expect((response) => {
         expect(response.body.documents[0]).toMatchObject({
@@ -566,7 +651,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .get(`/documents/${upload.body.document.id}`)
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .expect(200)
       .expect((response) => {
         expect(response.body.document).toMatchObject({
@@ -584,7 +669,7 @@ describe.sequential('Balance API backend workflow', () => {
 
       await request(ctx.app.getHttpServer())
         .patch(`/documents/${document.id}/corrections`)
-        .set('Authorization', auth(consumer.token))
+        .use(auth(consumer.session))
         .send({
           fields: [{ name: 'merchantName', correctedValue: 'Corrected Merchant' }]
         })
@@ -602,7 +687,7 @@ describe.sequential('Balance API backend workflow', () => {
 
       await request(ctx.app.getHttpServer())
         .patch(`/documents/${document.id}/corrections`)
-        .set('Authorization', auth(consumer.token))
+        .use(auth(consumer.session))
         .send({
           fields: [{ name: 'merchantName', correctedValue: 'Blocked Merchant' }]
         })
@@ -617,7 +702,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .post(`/documents/${retryable.id}/extraction/retry`)
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .send({})
       .expect(201)
       .expect((response) => {
@@ -645,7 +730,7 @@ describe.sequential('Balance API backend workflow', () => {
 
       await request(ctx.app.getHttpServer())
         .post(`/documents/${blocked.id}/extraction/retry`)
-        .set('Authorization', auth(consumer.token))
+        .use(auth(consumer.session))
         .send({})
         .expect(409);
     }
@@ -667,7 +752,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .post(`/documents/${claimedDoc.id}/extraction/retry`)
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .send({})
       .expect(409);
 
@@ -689,7 +774,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .delete(`/documents/${deleteTarget.id}`)
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .expect(204);
 
     const deletionAudit = await ctx.prisma.auditEvent.findFirstOrThrow({
@@ -697,9 +782,9 @@ describe.sequential('Balance API backend workflow', () => {
     });
     expect(deletionAudit.documentId).toBeNull();
     expect(deletionAudit.metadata).toMatchObject({
-      deletedDocumentId: deleteTarget.id,
-      originalFilename: deleteTarget.originalFilename
+      deletedDocumentId: deleteTarget.id
     });
+    expect(deletionAudit.metadata).not.toHaveProperty('originalFilename');
   });
 
   it('proves metadata patch accepts all system documentType values including invoice/receipt/receipt_pdf', async () => {
@@ -717,14 +802,14 @@ describe.sequential('Balance API backend workflow', () => {
 
       const response = await request(ctx.app.getHttpServer())
         .patch(`/documents/${doc.id}/metadata`)
-        .set('Authorization', auth(consumer.token))
+        .use(auth(consumer.session))
         .send({ category: 'other', documentType })
         .expect(200);
 
       expect(response.body.document.documentType).toBe(documentType);
     }
 
-    // Also verify that omitting documentType (undefined) works — this is the enterprise view path
+    // Also verify that omitting documentType (undefined) works for the enterprise view path.
     const nullDoc = await createDocument(ctx.prisma, {
       ownerId: consumer.user.id,
       status: 'extracted',
@@ -733,7 +818,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .patch(`/documents/${nullDoc.id}/metadata`)
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .send({ category: 'other' })
       .expect(200);
   });
@@ -802,7 +887,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .get('/documents/insights')
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .expect(200)
       .expect((response) => {
         expect(response.body.insights).toMatchObject({
@@ -852,7 +937,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .get('/claims/insights')
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .expect(200)
       .expect((response) => {
         expect(response.body.insights).toMatchObject({
@@ -877,7 +962,7 @@ describe.sequential('Balance API backend workflow', () => {
       .post('/auth/register')
       .send({
         email: `budget-other-${suffix}@balance.local`,
-        password: 'ValidPass1!',
+        password: 'valid local passphrase 1',
         displayName: 'Budget Other'
       })
       .expect(201);
@@ -894,7 +979,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .patch(`/documents/${editedCategoryDocument.id}/metadata`)
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .send({ category: 'Restaurant' })
       .expect(200)
       .expect((response) => {
@@ -981,12 +1066,12 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .get('/budgets')
-      .set('Authorization', auth(staff.token))
+      .use(auth(staff.session))
       .expect(403);
 
     const created = await request(ctx.app.getHttpServer())
       .post('/budgets')
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .send({ category: 'Restaurant', amountMinor: 10000, month: budgetMonth, currency: 'MYR' })
       .expect(201);
 
@@ -1003,7 +1088,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     const softwareBudget = await request(ctx.app.getHttpServer())
       .post('/budgets')
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .send({ category: 'software', amountMinor: 3000, month: budgetMonth })
       .expect(201);
     expect(softwareBudget.body.budget).toMatchObject({
@@ -1025,13 +1110,13 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .post('/budgets')
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .send({ category: 'RESTAURANT', amountMinor: 8000, month: budgetMonth })
       .expect(409);
 
     await request(ctx.app.getHttpServer())
       .get(`/budgets?month=${budgetMonth}`)
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .expect(200)
       .expect((response) => {
         expect(response.body.month).toBe(budgetMonth);
@@ -1050,7 +1135,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .get('/budgets?month=2026-04')
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .expect(200)
       .expect((response) => {
         expect(response.body.budgets).toHaveLength(0);
@@ -1061,13 +1146,13 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .patch(`/budgets/${created.body.budget.id}`)
-      .set('Authorization', auth(otherConsumer.body.accessToken))
+      .use(auth(sessionFromResponse(otherConsumer)))
       .send({ amountMinor: 5000 })
       .expect(404);
 
     await request(ctx.app.getHttpServer())
       .patch(`/budgets/${created.body.budget.id}`)
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .send({ amountMinor: 8000 })
       .expect(200)
       .expect((response) => {
@@ -1081,17 +1166,17 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .delete(`/budgets/${created.body.budget.id}`)
-      .set('Authorization', auth(otherConsumer.body.accessToken))
+      .use(auth(sessionFromResponse(otherConsumer)))
       .expect(404);
 
     await request(ctx.app.getHttpServer())
       .delete(`/budgets/${created.body.budget.id}`)
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .expect(200);
 
     await request(ctx.app.getHttpServer())
       .get(`/budgets?month=${budgetMonth}`)
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .expect(200)
       .expect((response) => {
         expect(response.body.budgets).toHaveLength(1);
@@ -1123,7 +1208,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     const claimResponse = await request(ctx.app.getHttpServer())
       .post('/claims')
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .send({
         documentId: document.id,
         purpose: 'Reimbursement',
@@ -1138,7 +1223,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .get('/claims')
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .expect(200)
       .expect((response) => {
         expect(response.body.claims.some((claim: { id: string }) => claim.id === claimId)).toBe(true);
@@ -1146,7 +1231,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .get(`/claims/${claimId}`)
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .expect(200)
       .expect((response) => {
         expect(response.body.claim.review.id).toBe(reviewId);
@@ -1154,7 +1239,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .get('/reviews/queue')
-      .set('Authorization', auth(reviewer.token))
+      .use(auth(reviewer.session))
       .expect(200)
       .expect((response) => {
         expect(response.body.reviews.some((review: { id: string }) => review.id === reviewId)).toBe(true);
@@ -1162,7 +1247,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .get(`/reviews/${reviewId}`)
-      .set('Authorization', auth(reviewer.token))
+      .use(auth(reviewer.session))
       .expect(200)
       .expect((response) => {
         expect(response.body.review.status).toBe('pending');
@@ -1176,8 +1261,31 @@ describe.sequential('Balance API backend workflow', () => {
     expect(afterRead.claim.status).toBe('submitted');
 
     await request(ctx.app.getHttpServer())
+      .post(`/reviews/${reviewId}/assign`)
+      .use(auth(admin.session))
+      .send({ reviewerId: reviewer2.user.id })
+      .expect(200);
+
+    await request(ctx.app.getHttpServer())
+      .delete(`/reviews/${reviewId}/assign`)
+      .use(auth(admin.session))
+      .expect(200);
+
+    const assignmentActions = await ctx.prisma.auditEvent.findMany({
+      where: {
+        reviewId,
+        action: { in: [SECURITY_AUDIT_ACTIONS.reviewAssigned, SECURITY_AUDIT_ACTIONS.reviewUnassigned] }
+      },
+      orderBy: { createdAt: 'asc' }
+    });
+    expect(assignmentActions.map((event) => event.action)).toEqual([
+      SECURITY_AUDIT_ACTIONS.reviewAssigned,
+      SECURITY_AUDIT_ACTIONS.reviewUnassigned
+    ]);
+
+    await request(ctx.app.getHttpServer())
       .get(`/reviews/${reviewId}`)
-      .set('Authorization', auth(reviewer2.token))
+      .use(auth(reviewer2.session))
       .expect(200)
       .expect((response) => {
         expect(response.body.review.status).toBe('pending');
@@ -1185,19 +1293,19 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .post(`/reviews/${reviewId}/approve`)
-      .set('Authorization', auth(reviewer.token))
+      .use(auth(reviewer.session))
       .send({ note: 'Skipping claim should fail' })
       .expect(403);
 
     await request(ctx.app.getHttpServer())
       .post(`/reviews/${reviewId}/reject`)
-      .set('Authorization', auth(reviewer.token))
+      .use(auth(reviewer.session))
       .send({ note: 'Skipping claim should fail' })
       .expect(403);
 
     await request(ctx.app.getHttpServer())
       .post(`/reviews/${reviewId}/claim`)
-      .set('Authorization', auth(reviewer.token))
+      .use(auth(reviewer.session))
       .expect(200)
       .expect((response) => {
         expect(response.body.review.status).toBe('in_review');
@@ -1213,33 +1321,33 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .get(`/reviews/${reviewId}`)
-      .set('Authorization', auth(reviewer2.token))
+      .use(auth(reviewer2.session))
       .expect(403);
 
     await request(ctx.app.getHttpServer())
       .get(`/documents/${document.id}`)
-      .set('Authorization', auth(reviewer2.token))
+      .use(auth(reviewer2.session))
       .expect(403);
 
     await request(ctx.app.getHttpServer())
       .get(`/claims/${claimId}`)
-      .set('Authorization', auth(reviewer2.token))
+      .use(auth(reviewer2.session))
       .expect(403);
 
     await request(ctx.app.getHttpServer())
       .get(`/audit?reviewId=${reviewId}`)
-      .set('Authorization', auth(reviewer2.token))
+      .use(auth(reviewer2.session))
       .expect(403);
 
     await request(ctx.app.getHttpServer())
       .post(`/reviews/${reviewId}/approve`)
-      .set('Authorization', auth(reviewer2.token))
+      .use(auth(reviewer2.session))
       .send({ note: 'Wrong reviewer should fail' })
       .expect(403);
 
     await request(ctx.app.getHttpServer())
       .post(`/reviews/${reviewId}/approve`)
-      .set('Authorization', auth(admin.token))
+      .use(auth(admin.session))
       .send({ note: 'Looks correct' })
       .expect(200)
       .expect((response) => {
@@ -1250,7 +1358,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .post(`/reviews/${reviewId}/claim`)
-      .set('Authorization', auth(reviewer.token))
+      .use(auth(reviewer.session))
       .expect(409);
 
     const rejectDocument = await createDocument(ctx.prisma, {
@@ -1260,19 +1368,19 @@ describe.sequential('Balance API backend workflow', () => {
 
     const rejectClaim = await request(ctx.app.getHttpServer())
       .post('/claims')
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .send({ documentId: rejectDocument.id, purpose: 'Warranty' })
       .expect(201);
 
     const rejectReviewId = rejectClaim.body.review.id as string;
     await request(ctx.app.getHttpServer())
       .post(`/reviews/${rejectReviewId}/claim`)
-      .set('Authorization', auth(reviewer.token))
+      .use(auth(reviewer.session))
       .expect(200);
 
     await request(ctx.app.getHttpServer())
       .get(`/reviews/${rejectReviewId}`)
-      .set('Authorization', auth(admin.token))
+      .use(auth(admin.session))
       .expect(200)
       .expect((response) => {
         expect(response.body.review.reviewerId).toBe(reviewer.user.id);
@@ -1280,7 +1388,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .post(`/reviews/${rejectReviewId}/reject`)
-      .set('Authorization', auth(admin.token))
+      .use(auth(admin.session))
       .send({ note: 'Missing merchant details' })
       .expect(200)
       .expect((response) => {
@@ -1290,9 +1398,23 @@ describe.sequential('Balance API backend workflow', () => {
         expect(response.body.document.status).toBe('rejected');
       });
 
+    const decisionActions = await ctx.prisma.auditEvent.findMany({
+      where: {
+        action: { in: [SECURITY_AUDIT_ACTIONS.reviewApproved, SECURITY_AUDIT_ACTIONS.reviewRejected] },
+        reviewId: { in: [reviewId, rejectReviewId] }
+      }
+    });
+    expect(decisionActions.map((event) => event.action)).toEqual(expect.arrayContaining([
+      SECURITY_AUDIT_ACTIONS.reviewApproved,
+      SECURITY_AUDIT_ACTIONS.reviewRejected
+    ]));
+    expect(decisionActions.every((event) => JSON.stringify(event.metadata) === '{"noteProvided":true}')).toBe(true);
+    expect(JSON.stringify(decisionActions.map((event) => event.metadata))).not.toContain('Looks correct');
+    expect(JSON.stringify(decisionActions.map((event) => event.metadata))).not.toContain('Missing merchant details');
+
     await request(ctx.app.getHttpServer())
       .get('/audit')
-      .set('Authorization', auth(admin.token))
+      .use(auth(admin.session))
       .expect(200)
       .expect((response) => {
         expect(response.body.auditEvents.length).toBeGreaterThan(0);
@@ -1300,7 +1422,7 @@ describe.sequential('Balance API backend workflow', () => {
 
     await request(ctx.app.getHttpServer())
       .get('/audit')
-      .set('Authorization', auth(consumer.token))
+      .use(auth(consumer.session))
       .expect(422);
   });
 });

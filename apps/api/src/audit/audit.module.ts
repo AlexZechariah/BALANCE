@@ -5,11 +5,12 @@ import { PrismaModule } from '../prisma/prisma.module';
 
 import { AuditController } from './audit.controller';
 import { AuditService } from './audit.service';
+import { SecurityAuditService } from './security-audit.service';
 
 @Module({
   imports: [PrismaModule, AuthModule],
   controllers: [AuditController],
-  providers: [AuditService],
-  exports: [AuditService]
+  providers: [AuditService, SecurityAuditService],
+  exports: [AuditService, SecurityAuditService]
 })
 export class AuditModule {}

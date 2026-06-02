@@ -10,25 +10,30 @@ import {
   type ReviewRejectPayload
 } from '@balance/schemas';
 
-import { AuditService } from '../audit/audit.service';
 import { AuthGuard, type AuthenticatedRequestUser } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
+import { RequireVerifiedEmail } from '../auth/verified-email.decorator';
+import { VerifiedEmailGuard } from '../auth/verified-email.guard';
+import { Actions } from '../authorization/actions';
+import { CheckPolicies } from '../authorization/policy.decorator';
+import { PolicyGuard } from '../authorization/policy.guard';
+import { Subjects } from '../authorization/subjects';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { BalanceRateLimit } from '../rate-limit/rate-limit.decorator';
 
 import { ReviewsService } from './reviews.service';
 
 @Controller('reviews')
 export class ReviewsController {
-  constructor(
-    @Inject(ReviewsService) private readonly reviews: ReviewsService,
-    @Inject(AuditService) private readonly audit: AuditService
-  ) {}
+  constructor(@Inject(ReviewsService) private readonly reviews: ReviewsService) {}
 
   @Get('queue')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('list')
+  @UseGuards(AuthGuard, RolesGuard, PolicyGuard)
   @Roles('reviewer', 'admin', 'system_admin')
+  @CheckPolicies((ability) => ability.can(Actions.read, Subjects.Review))
   async queue(
     @Query(new ZodValidationPipe(reviewQueueQuerySchema)) query: ReviewQueueQuery,
     @CurrentUser() user: AuthenticatedRequestUser
@@ -49,22 +54,29 @@ export class ReviewsController {
   }
 
   @Get('metrics')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('metrics')
+  @UseGuards(AuthGuard, RolesGuard, PolicyGuard)
   @Roles('reviewer', 'admin', 'system_admin')
+  @CheckPolicies((ability) => ability.can(Actions.read, Subjects.Review))
   async metrics(@CurrentUser() user: AuthenticatedRequestUser) {
     return this.reviews.metrics({ actorId: user.id, actorRole: user.role, organizationId: user.organizationId });
   }
 
   @Get(':id')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('read')
+  @UseGuards(AuthGuard, RolesGuard, PolicyGuard)
   @Roles('reviewer', 'admin', 'system_admin')
+  @CheckPolicies((ability) => ability.can(Actions.read, Subjects.Review))
   async detail(@Param('id') id: string, @CurrentUser() user: AuthenticatedRequestUser) {
     return this.reviews.getById({ id, actorId: user.id, actorRole: user.role, organizationId: user.organizationId });
   }
 
   @Post(':id/claim')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('review')
+  @UseGuards(AuthGuard, RolesGuard, VerifiedEmailGuard, PolicyGuard)
   @Roles('reviewer', 'admin', 'system_admin')
+  @RequireVerifiedEmail()
+  @CheckPolicies((ability) => ability.can(Actions.review, Subjects.Review))
   @HttpCode(200)
   async claim(@Param('id') id: string, @CurrentUser() user: AuthenticatedRequestUser) {
     return this.reviews.claim({
@@ -76,64 +88,51 @@ export class ReviewsController {
   }
 
   @Post(':id/assign')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('review')
+  @UseGuards(AuthGuard, RolesGuard, VerifiedEmailGuard, PolicyGuard)
   @Roles('admin', 'system_admin')
+  @RequireVerifiedEmail()
+  @CheckPolicies((ability) => ability.can(Actions.assign, Subjects.Review))
   @HttpCode(200)
   async assign(
     @Param('id') id: string,
-    @Body(new ZodValidationPipe(z.object({ reviewerId: z.string().uuid() }))) body: { reviewerId: string },
+    @Body(new ZodValidationPipe(z.object({ reviewerId: z.string().uuid() }).strict())) body: { reviewerId: string },
     @CurrentUser() user: AuthenticatedRequestUser
   ) {
-    const result = await this.reviews.assign({
+    return this.reviews.assign({
       reviewId: id,
       reviewerId: body.reviewerId,
       actorId: user.id,
       actorRole: user.role,
       organizationId: user.organizationId
     });
-
-    await this.audit.writeEvent({
-      action: 'review.assigned',
-      entityType: 'review',
-      entityId: id,
-      actor: { actorId: user.id, actorRole: user.role },
-      message: 'Review assigned to reviewer',
-      reviewId: id
-    });
-
-    return result;
   }
 
   @Delete(':id/assign')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('review')
+  @UseGuards(AuthGuard, RolesGuard, VerifiedEmailGuard, PolicyGuard)
   @Roles('admin', 'system_admin')
+  @RequireVerifiedEmail()
+  @CheckPolicies((ability) => ability.can(Actions.assign, Subjects.Review))
   @HttpCode(200)
   async unassign(
     @Param('id') id: string,
     @CurrentUser() user: AuthenticatedRequestUser
   ) {
-    const result = await this.reviews.unassign({
+    return this.reviews.unassign({
       reviewId: id,
       actorId: user.id,
       actorRole: user.role,
       organizationId: user.organizationId
     });
-
-    await this.audit.writeEvent({
-      action: 'review.unassigned',
-      entityType: 'review',
-      entityId: id,
-      actor: { actorId: user.id, actorRole: user.role },
-      message: 'Review unassigned',
-      reviewId: id
-    });
-
-    return result;
   }
 
   @Post(':id/approve')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('review')
+  @UseGuards(AuthGuard, RolesGuard, VerifiedEmailGuard, PolicyGuard)
   @Roles('admin', 'system_admin')
+  @RequireVerifiedEmail()
+  @CheckPolicies((ability) => ability.can(Actions.approve, Subjects.Review))
   @HttpCode(200)
   async approve(
     @Param('id') id: string,
@@ -150,8 +149,11 @@ export class ReviewsController {
   }
 
   @Post(':id/reject')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('review')
+  @UseGuards(AuthGuard, RolesGuard, VerifiedEmailGuard, PolicyGuard)
   @Roles('admin', 'system_admin')
+  @RequireVerifiedEmail()
+  @CheckPolicies((ability) => ability.can(Actions.reject, Subjects.Review))
   @HttpCode(200)
   async reject(
     @Param('id') id: string,

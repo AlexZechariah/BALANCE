@@ -3,6 +3,7 @@ import { loadAppConfig } from '@balance/config';
 import type { ApiStatusPayload, ApiVersionPayload } from '@balance/types';
 
 import { throwContractHttpError } from './common/contract-errors';
+import { appLogger } from './logging/logger.service';
 import { PrismaService } from './prisma/prisma.service';
 import { ExtractionQueueService } from './queue/extraction-queue.service';
 
@@ -33,11 +34,7 @@ export class AppController {
       await this.prisma.checkReady();
       await this.extractionQueue.checkReady();
     } catch (err) {
-      const runtime = (process.env.APP_ENV || process.env.NODE_ENV || 'local').trim().toLowerCase();
-      if (runtime !== 'production') {
-        // Keep the HTTP response stable while still surfacing the root cause during local dev.
-        console.error('[ready] dependency check failed', err);
-      }
+      appLogger.warn({ err: { name: err instanceof Error ? err.name : typeof err } }, 'Readiness dependency check failed');
       throwContractHttpError(503, 'SERVICE_UNAVAILABLE', 'Service unavailable', []);
     }
 

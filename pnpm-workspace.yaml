@@ -5,3 +5,8 @@ packages:
 onlyBuiltDependencies:
   - "@prisma/engines"
   - prisma
+
+overrides:
+  "@hono/node-server": "1.19.13"
+  "hono": "4.12.23"
+  "postcss@8.4.31": "8.5.14"

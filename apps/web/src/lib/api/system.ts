@@ -1,5 +1,5 @@
 // Read-only system metadata fetcher.
-// Calls /api/version, /api/health, /api/ready — never deployment controls.
+// Calls /api/version, /api/health, and /api/ready; never deployment controls.
 
 export interface ApiVersionPayload {
   service: string;

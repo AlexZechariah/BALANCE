@@ -7,10 +7,11 @@ from .image_preprocessor import preprocess_image
 from .models import OcrResult, PipelineResult
 from .ocr_provider import run_ocr
 from .parser import parse_fields
-from .pdf_renderer import render_pdf_pages
+from .pdf_renderer import assert_pdf_page_limit, count_pdf_pages, render_pdf_pages
 from .pdf_text_extractor import extract_pdf_text
 from .validator import validate_fields
 from .. import settings
+from ..observability import record_ocr_result, start_span
 
 
 def run_document_pipeline(
@@ -27,20 +28,24 @@ def run_document_pipeline(
     page_count: int | None = None
 
     if kind == "pdf":
-        text = extract_pdf_text(file_path)
-        if text:
-            ocr_result = OcrResult(provider="pdf_text", text=text, confidence=80.0, raw={"source": "pypdf"}, warnings=[])
-        else:
-            warnings.append("pdf_text_empty")
-            pages = render_pdf_pages(file_path)
-            try:
-                page_count = len(pages.image_paths)
-                image_paths = [preprocess_image(path) for path in pages.image_paths]
-                ocr_result = run_ocr(provider, image_paths)
-            finally:
-                pages.cleanup()
+        with start_span("worker.pipeline.pdf", {"balance.worker.requested_provider": provider}):
+            page_count = count_pdf_pages(file_path)
+            assert_pdf_page_limit(page_count)
+            text = extract_pdf_text(file_path)
+            if text:
+                record_ocr_result("pdf_text", "success", 0)
+                ocr_result = OcrResult(provider="pdf_text", text=text, confidence=80.0, raw={"source": "pypdf"}, warnings=[])
+            else:
+                warnings.append("pdf_text_empty")
+                pages = render_pdf_pages(file_path)
+                try:
+                    image_paths = [preprocess_image(path) for path in pages.image_paths]
+                    ocr_result = run_ocr(provider, image_paths)
+                finally:
+                    pages.cleanup()
     else:
-        ocr_result = run_ocr(provider, [preprocess_image(file_path)])
+        with start_span("worker.pipeline.image", {"balance.worker.requested_provider": provider}):
+            ocr_result = run_ocr(provider, [preprocess_image(file_path)])
 
     fields = parse_fields(ocr_result.text, ocr_result.confidence)
     warning_codes = validate_fields(fields, ocr_result.confidence, warnings + ocr_result.warnings)

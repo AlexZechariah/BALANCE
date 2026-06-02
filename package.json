@@ -18,26 +18,35 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
-    "prisma:seed": "node --env-file-if-exists=.env --import tsx packages/db/prisma/seed.ts",
-    "bump": "node scripts/bump-version.js"
+    "prisma:seed": "pnpm db:seed:local",
+    "db:seed:local": "node --env-file-if-exists=.env --import tsx packages/db/prisma/seed.ts --mode=local",
+    "db:seed:smoke": "node --env-file-if-exists=.env --import tsx packages/db/prisma/seed.ts --mode=smoke",
+    "auth:cleanup": "node --env-file-if-exists=.env --import tsx apps/api/src/auth/auth-cleanup.command.ts",
+    "security:auth": "bash scripts/verify/auth.sh",
+    "security:authz": "bash scripts/verify/authz.sh",
+    "security:upload": "bash scripts/verify/upload.sh",
+    "security:storage": "bash scripts/verify/storage.sh",
+    "security:scan": "bash scripts/security/scans.sh",
+    "security:proof": "bash scripts/verify/security.sh",
+    "bump": "node scripts/version.js"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@prisma/client": "7.8.0",
     "@tailwindcss/postcss": "4.2.4",
     "@types/node": "24.9.1",
     "@types/react": "19.2.2",
     "@types/react-dom": "19.2.2",
     "@vitejs/plugin-react": "6.0.1",
-    "eslint": "10.2.1",
+    "dotenv": "17.4.2",
+    "eslint": "10.4.1",
     "globals": "16.4.0",
     "prettier": "3.8.3",
+    "prisma": "7.8.0",
     "tsx": "4.20.0",
-    "turbo": "2.9.6",
+    "turbo": "2.9.16",
     "typescript": "5.9.3",
     "typescript-eslint": "8.58.1",
-    "vitest": "4.1.5",
-    "dotenv": "17.4.2",
-    "@prisma/client": "7.8.0",
-    "prisma": "7.8.0"
+    "vitest": "4.1.5"
   }
 }

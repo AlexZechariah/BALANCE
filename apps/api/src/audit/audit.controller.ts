@@ -12,9 +12,15 @@ import {
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
+import { Actions } from '../authorization/actions';
+import { CheckPolicies } from '../authorization/policy.decorator';
+import { PolicyGuard } from '../authorization/policy.guard';
+import { Subjects } from '../authorization/subjects';
 import { throwContractHttpError, throwValidationError } from '../common/contract-errors';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { PrismaService } from '../prisma/prisma.service';
+import { ScopedPrismaService } from '../prisma/scoped-prisma.service';
+import { BalanceRateLimit } from '../rate-limit/rate-limit.decorator';
 
 const NO_VISIBLE_ORG_ID = '00000000-0000-0000-0000-000000000000';
 const DESTRUCTIVE_ACTIONS = ['document.deleted', 'claim.deleted', 'documents.bulk_deleted', 'budget.deleted'];
@@ -33,11 +39,16 @@ function nonEmptyWhere(where: Prisma.AuditEventWhereInput): boolean {
 
 @Controller('audit')
 export class AuditController {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(ScopedPrismaService) private readonly scoped: ScopedPrismaService
+  ) {}
 
   @Get('summary')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('metrics')
+  @UseGuards(AuthGuard, RolesGuard, PolicyGuard)
   @Roles('admin', 'system_admin')
+  @CheckPolicies((ability) => ability.can(Actions.read, Subjects.AuditEvent))
   async summary(@CurrentUser() user: AuthenticatedRequestUser) {
     const since = new Date();
     since.setDate(since.getDate() - 30);
@@ -107,8 +118,10 @@ export class AuditController {
   }
 
   @Get()
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('audit')
+  @UseGuards(AuthGuard, RolesGuard, PolicyGuard)
   @Roles('consumer', 'reviewer', 'staff', 'admin', 'system_admin')
+  @CheckPolicies((ability) => ability.can(Actions.read, Subjects.AuditEvent))
   async list(
     @Query(new ZodValidationPipe(auditQuerySchema)) query: AuditQuery,
     @CurrentUser() user: AuthenticatedRequestUser
@@ -122,12 +135,17 @@ export class AuditController {
     }
 
     // Visibility checks for non-admin users.
+    const actor = { id: user.id, role: user.role, organizationId: user.organizationId };
     if (query.documentId) {
-      const doc = await this.prisma.document.findUnique({
-        where: { id: query.documentId },
+      const doc = await this.scoped.findDocument(actor, query.documentId, {
         select: { id: true, ownerId: true, organizationId: true, review: { select: { id: true, status: true, reviewerId: true } } }
       });
-      if (!doc) throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
+      if (!doc) {
+        if (await this.scoped.documentExists(query.documentId)) {
+          throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
+        }
+        throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
+      }
 
       if (user.role === 'consumer' && doc.ownerId !== user.id) {
         throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
@@ -144,8 +162,7 @@ export class AuditController {
     }
 
     if (query.claimId) {
-      const claim = await this.prisma.claim.findUnique({
-        where: { id: query.claimId },
+      const claim = await this.scoped.findClaim(actor, query.claimId, {
         select: {
           id: true,
           consumerId: true,
@@ -153,7 +170,12 @@ export class AuditController {
           review: { select: { id: true, status: true, reviewerId: true } }
         }
       });
-      if (!claim) throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
+      if (!claim) {
+        if (await this.scoped.claimExists(query.claimId)) {
+          throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
+        }
+        throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
+      }
 
       if (user.role === 'consumer' && claim.consumerId !== user.id) {
         throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
@@ -170,8 +192,7 @@ export class AuditController {
     }
 
     if (query.reviewId) {
-      const review = await this.prisma.review.findUnique({
-        where: { id: query.reviewId },
+      const review = await this.scoped.findReview(actor, query.reviewId, {
         select: {
           id: true,
           status: true,
@@ -180,7 +201,12 @@ export class AuditController {
           document: { select: { organizationId: true } }
         }
       });
-      if (!review) throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
+      if (!review) {
+        if (await this.scoped.reviewExists(query.reviewId)) {
+          throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
+        }
+        throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
+      }
 
       if (user.role === 'consumer' && review.claim.consumerId !== user.id) {
         throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);

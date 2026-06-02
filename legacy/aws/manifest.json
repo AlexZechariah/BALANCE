@@ -1,0 +1,31 @@
+{
+  "classification": "legacy-quarantined",
+  "activeByDefault": false,
+  "reason": "Historical AWS, SSM, EC2 host-monitoring, S3 adapter, and Textract-era implementation retained for reference only. Balance v0.6 local runtime must not import, invoke, package, or require these paths.",
+  "movedPaths": [
+    ".github/workflows/deploy-staging.yml",
+    ".github/workflows/deploy-production.yml",
+    ".github/workflows/rollback-staging.yml",
+    ".github/workflows/ci.yml#deploy-staging",
+    "scripts/deploy/",
+    "scripts/backup/",
+    "scripts/verify/monitoring.sh",
+    "infra/compose/compose.staging.yml",
+    "infra/compose/compose.production.yml",
+    "infra/monitoring/",
+    "services/worker/app/extraction_worker.py",
+    "apps/api/src/storage/storage.service.ts",
+    "apps/api/src/storage/s3-storage.adapter.ts",
+    "apps/api/src/storage/filesystem-storage.adapter.ts",
+    "apps/api/src/storage/storage.types.ts"
+  ],
+  "preservedActiveBoundaries": [
+    "apps/api/src/storage/object-storage.service.ts",
+    "apps/api/src/storage/object-storage.types.ts",
+    "apps/api/src/storage/providers/filesystem.provider.ts",
+    "apps/api/src/storage/providers/s3-compatible.provider.ts",
+    "apps/api/src/storage/storage-config.ts",
+    "packages/db/prisma/schema.prisma",
+    "packages/types/src/index.ts"
+  ]
+}

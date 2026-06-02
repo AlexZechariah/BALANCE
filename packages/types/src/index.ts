@@ -1,5 +1,5 @@
 export type AppEnvironment = 'local' | 'staging' | 'production';
-export type StorageDriver = 'filesystem' | 's3Compatible' | 'legacy_s3' | 's3';
+export type StorageDriver = 'filesystem' | 's3Compatible';
 export type DatabaseStorageDriver = 'filesystem' | 's3' | 's3Compatible';
 
 export const OBJECT_STORAGE_PROVIDERS = ['filesystem', 's3Compatible'] as const;
@@ -7,6 +7,35 @@ export type ObjectStorageProviderName = (typeof OBJECT_STORAGE_PROVIDERS)[number
 
 export const USER_ROLES = ['consumer', 'reviewer', 'staff', 'admin', 'system_admin'] as const;
 export type UserRole = (typeof USER_ROLES)[number];
+
+export const PASSWORD_MIN_LENGTH = 15;
+export const PASSWORD_MAX_LENGTH = 128;
+export const PASSWORD_BLOCKLIST = [
+  'balance password',
+  'balancepassword',
+  'balancepassword1',
+  'passwordpassword',
+  'passwordpassword1',
+  'password12345678',
+  'qwertyqwertyqwerty',
+  'letmeinletmein',
+  'welcome welcome',
+  'adminadminadmin'
+] as const;
+
+const PASSWORD_BLOCKLIST_SET = new Set<string>(PASSWORD_BLOCKLIST);
+
+export function blockedPasswordValue(value: string): boolean {
+  return PASSWORD_BLOCKLIST_SET.has(value.trim().toLowerCase());
+}
+
+export function validatePasswordPolicy(value: string): string | null {
+  if (!value) return 'Password is required.';
+  if (value.length < PASSWORD_MIN_LENGTH) return `Password must be at least ${PASSWORD_MIN_LENGTH} characters.`;
+  if (value.length > PASSWORD_MAX_LENGTH) return `Password must not exceed ${PASSWORD_MAX_LENGTH} characters.`;
+  if (blockedPasswordValue(value)) return 'Password is too common.';
+  return null;
+}
 
 export const DOCUMENT_STATUSES = [
   'uploaded',
@@ -31,7 +60,7 @@ export type ClaimStatus = (typeof CLAIM_STATUSES)[number];
 export const REVIEW_STATUSES = ['pending', 'in_review', 'approved', 'rejected'] as const;
 export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
 
-export const ENTITY_TYPES = ['document', 'extraction_job', 'claim', 'review', 'budget'] as const;
+export const ENTITY_TYPES = ['document', 'extraction_job', 'claim', 'review', 'budget', 'security_event'] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
 export const EXTRACTION_PROVIDERS = ['paddleocr', 'tesseract', 'manual'] as const;
@@ -178,12 +207,37 @@ export const AUDIT_ACTIONS = [
   'claim.recalled',
   'claim.deleted',
   'review.started',
+  'review.assigned',
+  'review.unassigned',
   'review.approved',
   'review.rejected',
   'documents.bulk_deleted',
   'budget.created',
   'budget.updated',
   'budget.deleted',
+  'auth.login.success',
+  'auth.login.failure',
+  'auth.logout',
+  'auth.session.revoked',
+  'auth.session.cleanup',
+  'auth.password_reset.requested',
+  'auth.password_reset.completed',
+  'auth.email_verification.requested',
+  'auth.email_verification.completed',
+  'auth.email_changed',
+  'auth.password_changed',
+  'auth.csrf.failed',
+  'auth.rate_limit.triggered',
+  'authz.denied',
+  'upload.rejected',
+  'document.previewed',
+  'document.downloaded',
+  'extraction.retry.denied',
+  'member.invited',
+  'member.removed',
+  'member.role_changed',
+  'admin.action.attempted',
+  'admin.action.completed',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -225,18 +279,23 @@ export interface AppConfig {
   apiBasePath: string;
   apiHealthPath: string;
   apiVersionPath: string;
+  apiJsonBodyLimit: string;
+  apiUrlencodedBodyLimit: string;
+  authDevExposeAccountTokens: boolean;
+  authSelfRegistrationEnabled: boolean;
+  authAccountTokenRetentionDays: number;
+  secureCookies: boolean;
+  trustProxy: false | string[];
+  externalWebOrigin: string;
+  corsOrigins: string[];
 
   databaseUrl: string;
   redisUrl: string;
 
   storageDriver: StorageDriver;
   storageFilesystemRoot: string;
-  s3Bucket: string;
-  s3Region: string;
-
-  jwtSecret: string;
-  jwtExpiresIn: string;
-  passwordPepper: string;
+  s3CompatibleBucket: string;
+  s3CompatibleEndpoint: string;
 }
 
 export interface ApiStatusPayload {

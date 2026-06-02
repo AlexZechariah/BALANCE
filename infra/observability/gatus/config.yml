@@ -1,0 +1,220 @@
+web:
+  port: 8080
+
+storage:
+  type: sqlite
+  path: /data/gatus.db
+  maximum-number-of-results: 20160
+  maximum-number-of-events: 200
+
+metrics: true
+
+alerting:
+  ntfy:
+    topic: balance-alerts
+    url: http://ntfy
+    priority: 4
+    disable-cache: true
+    disable-firebase: true
+    default-alert:
+      enabled: true
+      failure-threshold: 3
+      success-threshold: 2
+      send-on-resolved: true
+      description: Balance local status changed state. Review private developer observability before publishing any public incident update.
+
+ui:
+  title: Balance Status
+  header: Balance Status
+  description: Public service status for Balance.
+
+announcements:
+  - timestamp: 2026-06-01T21:00:00Z
+    type: operational
+    message: Balance public status monitoring is active.
+    archived: true
+
+endpoints:
+  - name: Web app
+    group: Balance
+    url: http://web:3000/
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+    ui:
+      hide-url: true
+      hide-hostname: true
+      hide-port: true
+      hide-conditions: true
+      hide-errors: true
+    alerts:
+      - type: ntfy
+
+  - name: API health
+    group: Balance
+    url: http://api:3001/health
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].status == ok"
+    ui:
+      hide-url: true
+      hide-hostname: true
+      hide-port: true
+      hide-conditions: true
+      hide-errors: true
+    alerts:
+      - type: ntfy
+
+  - name: API readiness
+    group: Balance
+    url: http://api:3001/ready
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].status == ready"
+    ui:
+      hide-url: true
+      hide-hostname: true
+      hide-port: true
+      hide-conditions: true
+      hide-errors: true
+    alerts:
+      - type: ntfy
+
+  - name: Background processing health
+    group: Balance
+    url: http://worker:8000/health
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].status == ok"
+    ui:
+      hide-url: true
+      hide-hostname: true
+      hide-port: true
+      hide-conditions: true
+      hide-errors: true
+    alerts:
+      - type: ntfy
+
+  - name: Background processing readiness
+    group: Balance
+    url: http://worker:8000/ready
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].status == ready"
+    ui:
+      hide-url: true
+      hide-hostname: true
+      hide-port: true
+      hide-conditions: true
+      hide-errors: true
+    alerts:
+      - type: ntfy
+
+  - name: Data store
+    group: Balance dependencies
+    url: tcp://postgres:5432
+    interval: 60s
+    conditions:
+      - "[CONNECTED] == true"
+    ui:
+      hide-url: true
+      hide-hostname: true
+      hide-port: true
+      hide-conditions: true
+      hide-errors: true
+    alerts:
+      - type: ntfy
+
+  - name: Job queue
+    group: Balance dependencies
+    url: tcp://redis:6379
+    interval: 60s
+    conditions:
+      - "[CONNECTED] == true"
+    ui:
+      hide-url: true
+      hide-hostname: true
+      hide-port: true
+      hide-conditions: true
+      hide-errors: true
+    alerts:
+      - type: ntfy
+
+  - name: Monitoring dashboard
+    group: Operations
+    url: http://grafana:3000/api/health
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+    ui:
+      hide-url: true
+      hide-hostname: true
+      hide-port: true
+      hide-conditions: true
+      hide-errors: true
+    alerts:
+      - type: ntfy
+
+  - name: Metrics collection
+    group: Operations
+    url: http://prometheus:9090/-/healthy
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+    ui:
+      hide-url: true
+      hide-hostname: true
+      hide-port: true
+      hide-conditions: true
+      hide-errors: true
+    alerts:
+      - type: ntfy
+
+  - name: Logs pipeline
+    group: Operations
+    url: http://loki:3100/ready
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+    ui:
+      hide-url: true
+      hide-hostname: true
+      hide-port: true
+      hide-conditions: true
+      hide-errors: true
+    alerts:
+      - type: ntfy
+
+  - name: Traces pipeline
+    group: Operations
+    url: http://tempo:3200/ready
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+    ui:
+      hide-url: true
+      hide-hostname: true
+      hide-port: true
+      hide-conditions: true
+      hide-errors: true
+    alerts:
+      - type: ntfy
+
+  - name: Profile collection
+    group: Operations
+    url: http://pyroscope:4040/ready
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+    ui:
+      hide-url: true
+      hide-hostname: true
+      hide-port: true
+      hide-conditions: true
+      hide-errors: true
+    alerts:
+      - type: ntfy

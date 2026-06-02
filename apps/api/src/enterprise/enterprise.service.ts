@@ -1,8 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
-import bcrypt from 'bcryptjs';
 import type { ClaimStatus, DocumentStatus, Prisma, Role } from '@balance/db';
+import { SECURITY_AUDIT_ACTIONS } from '../audit/audit-event.constants';
+import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { ScopedPrismaService } from '../prisma/scoped-prisma.service';
 import { throwContractHttpError } from '../common/contract-errors';
+import { PasswordHashingService } from '../auth/password-hashing.service';
 
 function isPrismaKnownErrorCode(error: unknown, code: string): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: unknown }).code === code;
@@ -17,15 +20,18 @@ function prismaTargetIncludes(error: unknown, targetName: string): boolean {
 
 @Injectable()
 export class EnterpriseService {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
-
-  private peppered(password: string): string {
-    const pepper = (process.env.PASSWORD_PEPPER || '').trim();
-    return `${password}${pepper}`;
-  }
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(ScopedPrismaService) private readonly scoped: ScopedPrismaService,
+    @Inject(PasswordHashingService) private readonly passwords: PasswordHashingService,
+    @Inject(AuditService) private readonly audit: AuditService
+  ) {}
 
   private async requireOrgAdmin(adminId: string) {
-    const admin = await this.prisma.user.findUnique({ where: { id: adminId } });
+    const admin = await this.prisma.user.findUnique({
+      where: { id: adminId },
+      select: { id: true, email: true, displayName: true, role: true, organizationId: true, createdAt: true, updatedAt: true }
+    });
     if (!admin || admin.role !== 'admin' || !admin.organizationId) {
       throwContractHttpError(403, 'FORBIDDEN', 'Only enterprise admins can manage members', []);
     }
@@ -33,8 +39,10 @@ export class EnterpriseService {
   }
 
   private async requireOrgMember(memberId: string, organizationId: string) {
-    const member = await this.prisma.user.findUnique({ where: { id: memberId } });
-    if (!member || member.organizationId !== organizationId) {
+    const member = await this.prisma.user.findFirst({
+      where: { id: memberId, organizationId }
+    });
+    if (!member) {
       throwContractHttpError(404, 'NOT_FOUND', 'Member not found', []);
     }
     return member;
@@ -57,32 +65,46 @@ export class EnterpriseService {
     const admin = await this.requireOrgAdmin(adminId);
 
     // Check for existing email
-    const existing = await this.prisma.user.findUnique({ where: { email } });
+    const existing = await this.prisma.user.findUnique({ where: { email }, select: { id: true } });
     if (existing) {
       throwContractHttpError(409, 'AUTH_EMAIL_EXISTS', 'A user with this email already exists', []);
     }
 
-    const passwordHash = await bcrypt.hash(this.peppered(password), 10);
+    const passwordHash = await this.passwords.hash(password);
     const normalizedRole = (role || '').trim().toLowerCase();
     const validRoles: Role[] = ['staff', 'reviewer', 'admin'];
     const memberRole: Role = validRoles.includes(normalizedRole as Role) ? (normalizedRole as Role) : 'staff';
 
-    const member = await this.prisma.user.create({
-      data: {
-        email,
-        passwordHash,
-        displayName,
-        role: memberRole,
-        organizationId: admin.organizationId,
-      },
-      select: {
-        id: true,
-        email: true,
-        displayName: true,
-        role: true,
-        organizationId: true,
-        createdAt: true,
-      },
+    const member = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
+        data: {
+          email,
+          passwordHash,
+          displayName,
+          role: memberRole,
+          organizationId: admin.organizationId,
+        },
+        select: {
+          id: true,
+          email: true,
+          displayName: true,
+          role: true,
+          organizationId: true,
+          createdAt: true,
+        },
+      });
+
+      await this.audit.writeEvent({
+        action: SECURITY_AUDIT_ACTIONS.memberInvited,
+        entityType: 'security_event',
+        entityId: created.id,
+        actor: { actorId: admin.id, actorRole: admin.role },
+        message: 'Enterprise member created',
+        metadata: { role: created.role },
+        organizationId: admin.organizationId
+      }, tx);
+
+      return created;
     });
 
     return { member };
@@ -119,7 +141,18 @@ export class EnterpriseService {
       throwContractHttpError(403, 'FORBIDDEN', 'Cannot delete an admin member', []);
     }
 
-    await this.prisma.user.delete({ where: { id: memberId } });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.delete({ where: { id: memberId } });
+      await this.audit.writeEvent({
+        action: SECURITY_AUDIT_ACTIONS.memberRemoved,
+        entityType: 'security_event',
+        entityId: memberId,
+        actor: { actorId: admin.id, actorRole: admin.role },
+        message: 'Enterprise member removed',
+        metadata: { role: member.role },
+        organizationId: admin.organizationId
+      }, tx);
+    });
 
     return { ok: true };
   }
@@ -132,12 +165,24 @@ export class EnterpriseService {
       throwContractHttpError(422, 'VALIDATION_ERROR', 'Role must be staff, reviewer, or admin', [{ path: 'role', message: 'Invalid role' }]);
     }
 
-    await this.assertNotLastAdmin(memberId, admin.organizationId, normalizedRole as Role);
+    const member = await this.assertNotLastAdmin(memberId, admin.organizationId, normalizedRole as Role);
 
-    const updated = await this.prisma.user.update({
-      where: { id: memberId },
-      data: { role: normalizedRole as Role },
-      select: { id: true, email: true, displayName: true, role: true, organizationId: true, createdAt: true }
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const changed = await tx.user.update({
+        where: { id: memberId },
+        data: { role: normalizedRole as Role },
+        select: { id: true, email: true, displayName: true, role: true, organizationId: true, createdAt: true }
+      });
+      await this.audit.writeEvent({
+        action: SECURITY_AUDIT_ACTIONS.memberRoleChanged,
+        entityType: 'security_event',
+        entityId: memberId,
+        actor: { actorId: admin.id, actorRole: admin.role },
+        message: 'Enterprise member role changed',
+        metadata: { previousRole: member.role, nextRole: changed.role },
+        organizationId: admin.organizationId
+      }, tx);
+      return changed;
     });
 
     return { member: updated };
@@ -163,10 +208,30 @@ export class EnterpriseService {
     if (input.email !== undefined && input.email !== member.email) data.email = input.email;
     if (normalizedRole) data.role = normalizedRole as Role;
 
-    const updated = await this.prisma.user.update({
-      where: { id: memberId },
-      data,
-      select: { id: true, email: true, displayName: true, role: true, organizationId: true, createdAt: true }
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const changed = await tx.user.update({
+        where: { id: memberId },
+        data,
+        select: { id: true, email: true, displayName: true, role: true, organizationId: true, createdAt: true }
+      });
+      await this.audit.writeEvent({
+        action: normalizedRole ? SECURITY_AUDIT_ACTIONS.memberRoleChanged : SECURITY_AUDIT_ACTIONS.adminActionCompleted,
+        entityType: 'security_event',
+        entityId: memberId,
+        actor: { actorId: admin.id, actorRole: admin.role },
+        message: normalizedRole ? 'Enterprise member role changed' : 'Enterprise member profile updated',
+        metadata: normalizedRole
+          ? { previousRole: member.role, nextRole: changed.role }
+          : {
+              operation: 'member.profile_update',
+              changedFields: [
+                ...(input.displayName !== undefined ? ['displayName'] : []),
+                ...(input.email !== undefined && input.email !== member.email ? ['email'] : [])
+              ]
+            },
+        organizationId: admin.organizationId
+      }, tx);
+      return changed;
     }).catch((error: unknown) => {
       if (isPrismaKnownErrorCode(error, 'P2002') && prismaTargetIncludes(error, 'email')) {
         throwContractHttpError(409, 'AUTH_EMAIL_EXISTS', 'A user with this email already exists', []);
@@ -184,9 +249,28 @@ export class EnterpriseService {
       throwContractHttpError(403, 'FORBIDDEN', 'Use account settings to change your own password', []);
     }
 
-    await this.prisma.user.update({
-      where: { id: memberId },
-      data: { passwordHash: await bcrypt.hash(this.peppered(password), 10) }
+    const passwordHash = await this.passwords.hash(password);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: memberId },
+        data: { passwordHash }
+      });
+
+      await tx.authSession.updateMany({
+        where: { userId: member.id, revokedAt: null },
+        data: { revokedAt: new Date() }
+      });
+
+      await this.audit.writeEvent({
+        action: SECURITY_AUDIT_ACTIONS.adminActionCompleted,
+        entityType: 'security_event',
+        entityId: member.id,
+        actor: { actorId: admin.id, actorRole: admin.role },
+        message: 'Enterprise member password reset',
+        metadata: { operation: 'member.password_reset' },
+        organizationId: admin.organizationId
+      }, tx);
     });
 
     return { ok: true };
@@ -208,14 +292,17 @@ export class EnterpriseService {
     }
 
     if (input.actorRole === 'admin') {
-      const admin = await this.prisma.user.findUnique({ where: { id: input.actorId } });
+      const admin = await this.prisma.user.findUnique({
+        where: { id: input.actorId },
+        select: { id: true, role: true, organizationId: true }
+      });
       if (!admin || admin.role !== 'admin' || admin.organizationId !== input.organizationId) {
         throwContractHttpError(403, 'FORBIDDEN', 'Only enterprise admins can list claims', []);
       }
     }
 
     const where: Prisma.ClaimWhereInput = {
-      organizationId: input.organizationId,
+      ...this.scoped.claimWhere({ id: input.actorId, role: input.actorRole, organizationId: input.organizationId }),
       ...(input.status ? { status: input.status as ClaimStatus } : { status: { not: 'draft' } })
     };
 
@@ -302,7 +389,10 @@ export class EnterpriseService {
     }
 
     if (input.actorRole === 'admin') {
-      const admin = await this.prisma.user.findUnique({ where: { id: input.actorId } });
+      const admin = await this.prisma.user.findUnique({
+        where: { id: input.actorId },
+        select: { id: true, role: true, organizationId: true }
+      });
       if (!admin || admin.role !== 'admin' || admin.organizationId !== input.organizationId) {
         throwContractHttpError(403, 'FORBIDDEN', 'Only enterprise admins can list documents', []);
       }
@@ -312,7 +402,7 @@ export class EnterpriseService {
     const offset = input.query.offset ?? 0;
 
     const where: Prisma.DocumentWhereInput = {
-      organizationId: input.organizationId,
+      ...this.scoped.documentWhere({ id: input.actorId, role: input.actorRole, organizationId: input.organizationId }),
       ...(input.query.status ? { status: input.query.status } : {}),
       ...(input.query.category ? { category: input.query.category } : {})
     };
@@ -408,8 +498,8 @@ export class EnterpriseService {
       throwContractHttpError(403, 'FORBIDDEN', 'Only enterprise admins can view documents', []);
     }
 
-    const document = await this.prisma.document.findUnique({
-      where: { id: input.documentId },
+    const actor = { id: input.actorId, role: input.actorRole, organizationId: input.organizationId };
+    const document = await this.scoped.findDocument(actor, input.documentId, {
       select: {
         id: true,
         ownerId: true,
@@ -419,11 +509,10 @@ export class EnterpriseService {
     });
 
     if (!document) {
+      if (await this.scoped.documentExists(input.documentId)) {
+        throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
+      }
       throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
-    }
-
-    if (input.actorRole !== 'system_admin' && document.organizationId !== input.organizationId) {
-      throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
     }
 
     return { document };

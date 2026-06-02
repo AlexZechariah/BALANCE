@@ -1,8 +1,13 @@
 // Centralized API client for the Balance web frontend.
 // All API calls go through /api (same-origin proxy). Never call :3001 directly.
 
+import { markClientRequestStart, recordApiClientRequest } from '../observability/client';
+
 const API_BASE = '/api';
-const TOKEN_KEY = 'balance.accessToken';
+const CSRF_COOKIE = 'balance.csrf';
+const CSRF_HEADER = 'x-csrf-token';
+
+let csrfTokenMemory: string | null = null;
 
 export interface ApiError {
   code: string;
@@ -21,29 +26,39 @@ export class BalanceApiError extends Error {
   }
 }
 
-export function getToken(): string | null {
+function readCookie(name: string): string | null {
   if (typeof window === 'undefined') return null;
-  return localStorage.getItem(TOKEN_KEY);
+  const match = document.cookie
+    .split(';')
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${name}=`));
+  return match ? match.slice(name.length + 1) : null;
 }
 
-export function setToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token);
+export function setCsrfToken(token: string): void {
+  csrfTokenMemory = token;
 }
 
-export function clearToken(): void {
-  localStorage.removeItem(TOKEN_KEY);
+export function clearCsrfToken(): void {
+  csrfTokenMemory = null;
 }
 
-function buildHeaders(includeAuth: boolean, isMultipart = false): HeadersInit {
+function csrfToken(): string | null {
+  return csrfTokenMemory || readCookie(CSRF_COOKIE);
+}
+
+function isMutatingMethod(method: string | undefined): boolean {
+  return ['POST', 'PUT', 'PATCH', 'DELETE'].includes((method || 'GET').toUpperCase());
+}
+
+function buildHeaders(includeAuth: boolean, method: string | undefined, isMultipart = false): HeadersInit {
   const headers: Record<string, string> = {};
   if (!isMultipart) {
     headers['Content-Type'] = 'application/json';
   }
-  if (includeAuth) {
-    const token = getToken();
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
+  if (includeAuth && isMutatingMethod(method)) {
+    const token = csrfToken();
+    if (token) headers[CSRF_HEADER] = token;
   }
   return headers;
 }
@@ -68,42 +83,67 @@ export async function apiRequest<T>(
 ): Promise<T> {
   const { auth = true, ...fetchOptions } = options;
   const url = `${API_BASE}${path}`;
+  const method = fetchOptions.method ?? 'GET';
+  const startedAtMs = markClientRequestStart();
+  let statusCode: number | null = null;
+  let outcome: 'ok' | 'error' = 'error';
 
-  const res = await fetch(url, {
-    ...fetchOptions,
-    headers: {
-      ...buildHeaders(auth),
-      ...(fetchOptions.headers ?? {}),
-    },
-  });
+  try {
+    const res = await fetch(url, {
+      ...fetchOptions,
+      credentials: 'include',
+      headers: {
+        ...buildHeaders(auth, method),
+        ...(fetchOptions.headers ?? {}),
+      },
+    });
+    statusCode = res.status;
 
-  if (!res.ok) {
-    const error = await parseErrorResponse(res);
-    throw new BalanceApiError(res.status, error);
+    if (!res.ok) {
+      const error = await parseErrorResponse(res);
+      throw new BalanceApiError(res.status, error);
+    }
+
+    if (res.status === 204) {
+      outcome = 'ok';
+      return undefined as T;
+    }
+
+    const data = await res.json() as T;
+    outcome = 'ok';
+    return data;
+  } finally {
+    recordApiClientRequest({ method, path, statusCode, startedAtMs, outcome });
   }
-
-  // 204 No Content
-  if (res.status === 204) return undefined as T;
-
-  return res.json() as Promise<T>;
 }
 
 export async function apiUpload<T>(path: string, formData: FormData): Promise<T> {
   const url = `${API_BASE}${path}`;
-  const token = getToken();
   const headers: Record<string, string> = {};
-  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const token = csrfToken();
+  if (token) headers[CSRF_HEADER] = token;
+  const startedAtMs = markClientRequestStart();
+  let statusCode: number | null = null;
+  let outcome: 'ok' | 'error' = 'error';
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: formData,
-  });
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      credentials: 'include',
+      headers,
+      body: formData,
+    });
+    statusCode = res.status;
 
-  if (!res.ok) {
-    const error = await parseErrorResponse(res);
-    throw new BalanceApiError(res.status, error);
+    if (!res.ok) {
+      const error = await parseErrorResponse(res);
+      throw new BalanceApiError(res.status, error);
+    }
+
+    const data = await res.json() as T;
+    outcome = 'ok';
+    return data;
+  } finally {
+    recordApiClientRequest({ method: 'POST', path, statusCode, startedAtMs, outcome });
   }
-
-  return res.json() as Promise<T>;
 }

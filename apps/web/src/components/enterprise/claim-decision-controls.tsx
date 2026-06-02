@@ -38,7 +38,7 @@ interface ClaimDecisionControlsProps {
   } | null;
   /** Claim status (for draft detection) */
   claimStatus: string;
-  /** Called after any action completes — parent refreshes data */
+  /** Called after any action completes; the parent refreshes data. */
   onActionComplete: () => void;
   /** Called with a new error message to show upstream */
   onError: (message: string | null) => void;

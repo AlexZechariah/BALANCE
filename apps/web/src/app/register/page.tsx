@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { Building2, User } from 'lucide-react';
+import { validatePasswordPolicy } from '@balance/types';
 import { useAuth } from '../../context/auth-context';
 import { BalanceApiError } from '../../lib/api/client';
 import { homeForRole } from '../../lib/auth-routing';
@@ -49,14 +50,8 @@ export default function RegisterPage() {
     if (!email.trim()) errors.email = 'Email is required.';
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.email = 'Invalid email address.';
 
-    if (!password) errors.password = 'Password is required.';
-    else if (password.length < 8) errors.password = 'At least 8 characters.';
-    else {
-      if (!/[A-Z]/.test(password)) errors.password = 'Need an uppercase letter.';
-      else if (!/[a-z]/.test(password)) errors.password = 'Need a lowercase letter.';
-      else if (!/[0-9]/.test(password)) errors.password = 'Need a digit.';
-      else if (!/[^A-Za-z0-9]/.test(password)) errors.password = 'Need a special character.';
-    }
+    const passwordError = validatePasswordPolicy(password);
+    if (passwordError) errors.password = passwordError;
 
     if (password !== confirmPassword) errors.confirmPassword = 'Passwords do not match.';
 
@@ -183,7 +178,7 @@ export default function RegisterPage() {
               )}
             </div>
 
-            {/* Organization name — only for enterprise */}
+            {/* Organization name is only for enterprise registration. */}
             {accountType === 'enterprise' && (
               <div>
                 <Label htmlFor="orgName">Organization name</Label>
@@ -226,7 +221,7 @@ export default function RegisterPage() {
               value={password}
               onChange={setPassword}
               disabled={submitting}
-              placeholder="At least 8 characters"
+              placeholder="At least 15 characters"
               error={fieldErrors.password}
             />
 

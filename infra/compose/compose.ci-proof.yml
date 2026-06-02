@@ -64,7 +64,13 @@ services:
     expose:
       - '8000'
     healthcheck:
-      test: ['CMD', 'curl', '-fsS', 'http://localhost:8000/health']
+      test:
+        [
+          'CMD',
+          'python3.13',
+          '-c',
+          "import sys, urllib.request; response = urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3); sys.exit(0 if 200 <= response.status < 400 else 1)"
+        ]
       interval: 10s
       timeout: 3s
       retries: 20
@@ -84,7 +90,7 @@ services:
       DEPLOYMENT_NAMESPACE: ${DEPLOYMENT_NAMESPACE:-balance}
       APP_ENV: local
       NODE_ENV: ${NODE_ENV:-development}
-      APP_VERSION: ${APP_VERSION:-0.5.0}
+      APP_VERSION: ${APP_VERSION:-0.6.0}
       GIT_COMMIT: ${GIT_COMMIT:-local}
       BUILD_ID: ${BUILD_ID:-local-build}
       API_PORT: 3001
@@ -96,9 +102,6 @@ services:
       STORAGE_FILESYSTEM_ROOT: /data/balance-storage
       EXTRACTION_PROVIDER_DEFAULT: ${EXTRACTION_PROVIDER_DEFAULT:-paddleocr}
       EXTRACTION_ALLOW_LEGACY_TEXTRACT: ${EXTRACTION_ALLOW_LEGACY_TEXTRACT:-false}
-      JWT_SECRET: ${JWT_SECRET:-replace-this-local-only}
-      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1h}
-      PASSWORD_PEPPER: ${PASSWORD_PEPPER:-replace-this-local-only}
     expose:
       - '3001'
     depends_on:

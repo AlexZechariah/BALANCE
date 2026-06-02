@@ -18,7 +18,14 @@ import { AuthGuard, type AuthenticatedRequestUser } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
+import { RequireVerifiedEmail } from '../auth/verified-email.decorator';
+import { VerifiedEmailGuard } from '../auth/verified-email.guard';
+import { Actions } from '../authorization/actions';
+import { CheckPolicies } from '../authorization/policy.decorator';
+import { PolicyGuard } from '../authorization/policy.guard';
+import { Subjects } from '../authorization/subjects';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { BalanceRateLimit } from '../rate-limit/rate-limit.decorator';
 
 import { EnterpriseService } from './enterprise.service';
 
@@ -27,8 +34,11 @@ export class EnterpriseController {
   constructor(@Inject(EnterpriseService) private readonly enterprise: EnterpriseService) {}
 
   @Post('members')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('membership')
+  @UseGuards(AuthGuard, RolesGuard, VerifiedEmailGuard, PolicyGuard)
   @Roles('admin')
+  @RequireVerifiedEmail()
+  @CheckPolicies((ability) => ability.can(Actions.create, Subjects.Membership))
   @HttpCode(201)
   async createMember(
     @Body(new ZodValidationPipe(createMemberRequestSchema)) body: CreateMemberRequest,
@@ -38,15 +48,19 @@ export class EnterpriseController {
   }
 
   @Get('members')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('list')
+  @UseGuards(AuthGuard, RolesGuard, PolicyGuard)
   @Roles('admin')
+  @CheckPolicies((ability) => ability.can(Actions.read, Subjects.Membership))
   async listMembers(@CurrentUser() user: AuthenticatedRequestUser) {
     return this.enterprise.listMembers(user.id);
   }
 
   @Get('claims')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('list')
+  @UseGuards(AuthGuard, RolesGuard, PolicyGuard)
   @Roles('admin', 'reviewer', 'system_admin')
+  @CheckPolicies((ability) => ability.can(Actions.read, Subjects.Claim))
   async listClaims(
     @Query(new ZodValidationPipe(claimListQuerySchema)) query: ClaimListQuery,
     @CurrentUser() user: AuthenticatedRequestUser
@@ -63,8 +77,10 @@ export class EnterpriseController {
   }
 
   @Get('documents')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('list')
+  @UseGuards(AuthGuard, RolesGuard, PolicyGuard)
   @Roles('admin', 'system_admin')
+  @CheckPolicies((ability) => ability.can(Actions.read, Subjects.Document))
   async listDocuments(
     @Query(new ZodValidationPipe(documentListQuerySchema)) query: DocumentListQuery,
     @CurrentUser() user: AuthenticatedRequestUser
@@ -89,8 +105,10 @@ export class EnterpriseController {
   }
 
   @Get('documents/:id')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('read')
+  @UseGuards(AuthGuard, RolesGuard, PolicyGuard)
   @Roles('admin', 'system_admin')
+  @CheckPolicies((ability) => ability.can(Actions.read, Subjects.Document))
   async documentDetail(@Param('id') id: string, @CurrentUser() user: AuthenticatedRequestUser) {
     return this.enterprise.getDocumentOwner({
       actorId: user.id,
@@ -101,16 +119,22 @@ export class EnterpriseController {
   }
 
   @Delete('members/:id')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('membership')
+  @UseGuards(AuthGuard, RolesGuard, VerifiedEmailGuard, PolicyGuard)
   @Roles('admin')
+  @RequireVerifiedEmail()
+  @CheckPolicies((ability) => ability.can(Actions.delete, Subjects.Membership))
   @HttpCode(200)
   async deleteMember(@Param('id') id: string, @CurrentUser() user: AuthenticatedRequestUser) {
     return this.enterprise.deleteMember(user.id, id);
   }
 
   @Patch('members/:id/role')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('membership')
+  @UseGuards(AuthGuard, RolesGuard, VerifiedEmailGuard, PolicyGuard)
   @Roles('admin')
+  @RequireVerifiedEmail()
+  @CheckPolicies((ability) => ability.can(Actions.update, Subjects.Membership))
   @HttpCode(200)
   async updateMemberRole(
     @Param('id') id: string,
@@ -121,8 +145,11 @@ export class EnterpriseController {
   }
 
   @Patch('members/:id')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('membership')
+  @UseGuards(AuthGuard, RolesGuard, VerifiedEmailGuard, PolicyGuard)
   @Roles('admin')
+  @RequireVerifiedEmail()
+  @CheckPolicies((ability) => ability.can(Actions.update, Subjects.Membership))
   @HttpCode(200)
   async updateMember(
     @Param('id') id: string,
@@ -133,8 +160,11 @@ export class EnterpriseController {
   }
 
   @Patch('members/:id/password')
-  @UseGuards(AuthGuard, RolesGuard)
+  @BalanceRateLimit('membership')
+  @UseGuards(AuthGuard, RolesGuard, VerifiedEmailGuard, PolicyGuard)
   @Roles('admin')
+  @RequireVerifiedEmail()
+  @CheckPolicies((ability) => ability.can(Actions.update, Subjects.Membership))
   @HttpCode(200)
   async resetMemberPassword(
     @Param('id') id: string,

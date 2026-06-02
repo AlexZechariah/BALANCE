@@ -7,6 +7,15 @@ from redis.asyncio import Redis
 
 from .queue_proof import process_queue_proof
 from .open_ocr_worker import process_extraction
+from .observability import (
+    instrument_queue_handler,
+    log_worker_failure,
+    metrics_response,
+    observe_fastapi_request,
+    set_worker_health,
+    shutdown_observability,
+    start_observability,
+)
 from . import settings
 from . import db
 
@@ -19,12 +28,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 
 app = FastAPI(title="Balance Worker", version=VERSION)
 
 _shutdown = asyncio.Event()
 _workers: list[Worker] = []
+
+
+@app.middleware("http")
+async def metrics_middleware(request, call_next):
+    return await observe_fastapi_request(request, call_next)
 
 
 @app.get("/health")
@@ -46,8 +60,16 @@ async def ready():
     return {"status": "ready", "service": "balance-worker"}
 
 
+@app.get("/metrics", include_in_schema=False)
+async def metrics():
+    return metrics_response()
+
+
 @app.on_event("startup")
 async def on_startup():
+    start_observability(app)
+    set_worker_health(True)
+
     def _signal_handler(_signum, _frame):
         _shutdown.set()
 
@@ -68,15 +90,26 @@ async def on_startup():
         (settings.QUEUE_PROOF_NAME, process_queue_proof),
         (settings.EXTRACTION_QUEUE_NAME, process_extraction),
     ]:
-        w = Worker(queue_name, handler, {"connection": settings.REDIS_URL})
-        w.on("failed", lambda job, err: logger.error(
-            "Worker job %s failed (queue=%s): %s", job.id, queue_name, err
-        ))
+        wrapped = instrument_queue_handler(queue_name, handler, getattr(handler, "__name__", "handler"))
+        w = Worker(queue_name, wrapped, {"connection": settings.REDIS_URL})
+        w.on("failed", lambda _job, err, queue=queue_name: log_worker_failure(queue, err))
         _workers.append(w)
 
     async def _waiter():
         await _shutdown.wait()
-        for w in _workers:
-            await w.close()
+        await _close_workers()
 
     asyncio.create_task(_waiter())
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    set_worker_health(False)
+    await _close_workers()
+    shutdown_observability()
+
+
+async def _close_workers():
+    while _workers:
+        worker = _workers.pop()
+        await worker.close()

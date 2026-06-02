@@ -6,7 +6,13 @@ import uuid
 from datetime import datetime, timezone
 
 from . import db, settings
+from .pipeline.image_preprocessor import ImagePixelLimitExceeded
 from .pipeline.models import ParsedField, PipelineResult
+from .pipeline.pdf_renderer import PdfPageLimitExceeded
+
+
+class StaleExtractionJobReference(RuntimeError):
+    """Raised when a Redis job points at database rows that no longer exist."""
 
 
 def persist_pipeline_result(document_id: str, extraction_job_id: str, result: PipelineResult) -> None:
@@ -62,7 +68,16 @@ def persist_pipeline_result(document_id: str, extraction_job_id: str, result: Pi
                 'UPDATE "ExtractionJob" SET status=%s::"ExtractionJobStatus", "completedAt"=%s, "errorMessage"=NULL, "warningCodes"=%s::jsonb, "confidenceSummary"=%s::jsonb WHERE id=%s',
                 ("completed", _now(), json.dumps(result.warnings), json.dumps(result.confidence_summary), extraction_job_id),
             )
-            _audit(cur, "extraction.completed", "extraction_job", extraction_job_id, "Extraction completed", result.normalized, document_id, extraction_job_id)
+            _audit(
+                cur,
+                "extraction.completed",
+                "extraction_job",
+                extraction_job_id,
+                "Extraction completed",
+                {"provider": result.provider, "warningCount": len(result.warnings), "pageCount": result.page_count},
+                document_id,
+                extraction_job_id,
+            )
             for warning in result.warnings:
                 _audit(cur, "extraction.warning", "document", document_id, warning, {"provider": result.provider, "warning": warning}, document_id, extraction_job_id)
 
@@ -70,6 +85,9 @@ def persist_pipeline_result(document_id: str, extraction_job_id: str, result: Pi
 def mark_started(document_id: str, extraction_job_id: str, provider: str, pipeline_version: str, object_ref: dict | None) -> None:
     with db.connect(settings.DATABASE_URL) as conn:
         with conn.cursor() as cur:
+            if not _extraction_job_exists(cur, document_id, extraction_job_id):
+                raise StaleExtractionJobReference("stale extraction job reference")
+
             cur.execute(
                 'UPDATE "ExtractionJob" SET status=%s::"ExtractionJobStatus", "startedAt"=%s, "pipelineVersion"=%s WHERE id=%s',
                 ("processing", _now(), pipeline_version, extraction_job_id),
@@ -88,21 +106,46 @@ def mark_started(document_id: str, extraction_job_id: str, provider: str, pipeli
                     document_id,
                 ),
             )
-            _audit(cur, "extraction.started", "document", document_id, "Extraction started", {"provider": provider, "objectRef": object_ref or {}}, document_id, extraction_job_id)
+            _audit(cur, "extraction.started", "document", document_id, "Extraction started", {"provider": provider}, document_id, extraction_job_id)
 
 
 def mark_failed(document_id: str, extraction_job_id: str, provider: str, error: Exception) -> None:
+    failure_reason = _safe_failure_reason(error)
     with db.connect(settings.DATABASE_URL) as conn:
         with conn.cursor() as cur:
+            if not _extraction_job_exists(cur, document_id, extraction_job_id):
+                return
+
             cur.execute(
                 'UPDATE "ExtractionJob" SET status=%s::"ExtractionJobStatus", "completedAt"=%s, "errorMessage"=%s WHERE id=%s',
-                ("failed", _now(), str(error)[:500], extraction_job_id),
+                ("failed", _now(), failure_reason, extraction_job_id),
             )
             cur.execute(
                 'UPDATE "Document" SET status=%s::"DocumentStatus", "updatedAt"=%s WHERE id=%s',
                 ("failed", _now(), document_id),
             )
-            _audit(cur, "extraction.failed", "document", document_id, "Extraction failed", {"provider": provider, "error": str(error)[:500]}, document_id, extraction_job_id)
+            _audit(cur, "extraction.failed", "document", document_id, "Extraction failed", {"provider": provider, "reason": failure_reason}, document_id, extraction_job_id)
+
+
+def _safe_failure_reason(error: Exception) -> str:
+    if isinstance(error, PdfPageLimitExceeded):
+        return "pdf_page_limit_exceeded"
+    if isinstance(error, ImagePixelLimitExceeded):
+        return "image_pixel_limit_exceeded"
+
+    message = str(error)
+    if message in {"pdf_page_limit_exceeded", "image_pixel_limit_exceeded"}:
+        return message
+
+    return "extraction_failed"
+
+
+def _extraction_job_exists(cur, document_id: str, extraction_job_id: str) -> bool:
+    cur.execute(
+        'SELECT 1 FROM "ExtractionJob" WHERE id=%s AND "documentId"=%s',
+        (extraction_job_id, document_id),
+    )
+    return cur.fetchone() is not None
 
 
 def _upsert_field(cur, document_id: str, field: ParsedField) -> None:

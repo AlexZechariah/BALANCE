@@ -1,44 +1,10 @@
-'use client';
-
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
 
-interface GitHubCommit {
-  sha: string;
-  commit: {
-    message: string;
-    author: {
-      name: string;
-      date: string;
-    };
-  };
-}
-
-interface CommitEntry {
-  sha: string;
-  shortSha: string;
+interface ChangelogEntry {
+  type: 'feat' | 'fix';
   title: string;
-  body: string | null;
-  author: string;
+  summary: string;
   date: string;
-}
-
-function parseCommit(commit: GitHubCommit): CommitEntry {
-  const lines = commit.commit.message.trim().split('\n');
-  const title = lines[0] ?? '';
-  const body = lines.slice(2).join('\n').trim() || null;
-  return {
-    sha: commit.sha,
-    shortSha: commit.sha.slice(0, 7),
-    title,
-    body,
-    author: commit.commit.author.name,
-    date: new Date(commit.commit.author.date).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    }),
-  };
 }
 
 const COMMIT_TYPE_COLORS: Record<string, string> = {
@@ -52,47 +18,37 @@ const COMMIT_TYPE_COLORS: Record<string, string> = {
   perf: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500',
 };
 
-function CommitTypeBadge({ title }: { title: string }) {
-  const match = title.match(/^(\w+)(\(.+?\))?[!:]?/);
-  const type = match?.[1]?.toLowerCase() ?? '';
-  const scope = match?.[2]?.replace(/[()]/g, '') ?? null;
+const CHANGELOG_ENTRIES: ChangelogEntry[] = [
+  {
+    type: 'feat',
+    title: 'Portable security and observability foundation',
+    summary: 'Added hardened cookie sessions, server-side authorization, safer uploads, structured logging, security verification, and local observability services.',
+    date: 'June 2026',
+  },
+  {
+    type: 'feat',
+    title: 'Provider-neutral document processing',
+    summary: 'Added a local-first document pipeline with provider-neutral storage, open-source extraction, correction, claim, review, and audit workflows.',
+    date: 'June 2026',
+  },
+  {
+    type: 'fix',
+    title: 'More reliable monthly budget tracking',
+    summary: 'Improved monthly budget calculations and aligned budget status behavior across the application.',
+    date: 'May 2026',
+  },
+];
+
+function ChangeTypeBadge({ type }: { type: ChangelogEntry['type'] }) {
   const color = COMMIT_TYPE_COLORS[type] ?? 'border-muted bg-muted text-muted-foreground';
-  if (!type) return null;
   return (
     <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${color}`}>
-      {scope ? `${type}(${scope})` : type}
+      {type}
     </span>
   );
 }
 
-function cleanTitle(title: string): string {
-  return title.replace(/^\w+(\(.+?\))?[!]?:\s*/, '');
-}
-
 export default function ChangelogPage() {
-  const [commits, setCommits] = useState<CommitEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetch('/api/github/commits')
-      .then(async (res) => {
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body?.error || `Failed to load commits: ${res.status}`);
-        }
-        return res.json() as Promise<GitHubCommit[]>;
-      })
-      .then((data) => {
-        setCommits(data.map(parseCommit));
-        setLoading(false);
-      })
-      .catch((err) => {
-        setError(err instanceof Error ? err.message : 'Failed to load changelog.');
-        setLoading(false);
-      });
-  }, []);
-
   return (
     <main className="min-h-screen bg-background text-foreground px-6 py-10">
       <div className="mx-auto max-w-2xl flex flex-col gap-8">
@@ -102,50 +58,27 @@ export default function ChangelogPage() {
           </Link>
           <h1 className="mt-4 text-3xl font-semibold tracking-tight">{"What's New"}</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Latest changes to Balance, pulled directly from GitHub.
+            Curated product updates from Balance.
           </p>
         </header>
 
-        {loading && (
-          <div className="flex flex-col gap-3">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="rounded-2xl border border-border bg-muted/30 p-5 animate-pulse">
-                <div className="h-3 w-24 rounded bg-muted mb-3" />
-                <div className="h-4 w-3/4 rounded bg-muted" />
-              </div>
-            ))}
-          </div>
-        )}
-
-        {error && (
-          <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-5">
-            <p className="text-sm text-red-500">{error}</p>
-          </div>
-        )}
-
-        {!loading && !error && (
-          <div className="flex flex-col gap-3">
-            {commits.map((commit) => (
-              <div key={commit.sha} className="rounded-2xl border border-border bg-muted/20 p-5">
-                <div className="flex items-start justify-between gap-3 mb-2">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <CommitTypeBadge title={commit.title} />
-                    <span className="font-mono text-xs text-muted-foreground">{commit.shortSha}</span>
-                  </div>
-                  <span className="text-xs text-muted-foreground shrink-0">{commit.date}</span>
+        <div className="flex flex-col gap-3">
+          {CHANGELOG_ENTRIES.map((entry) => (
+            <div key={entry.title} className="rounded-2xl border border-border bg-muted/20 p-5">
+              <div className="flex items-start justify-between gap-3 mb-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <ChangeTypeBadge type={entry.type} />
                 </div>
-                <p className="text-sm font-medium">{cleanTitle(commit.title)}</p>
-                {commit.body && (
-                  <p className="mt-2 text-xs text-muted-foreground whitespace-pre-line">{commit.body}</p>
-                )}
-                <p className="mt-2 text-xs text-muted-foreground">{commit.author}</p>
+                <span className="text-xs text-muted-foreground shrink-0">{entry.date}</span>
               </div>
-            ))}
-          </div>
-        )}
+              <p className="text-sm font-medium">{entry.title}</p>
+              <p className="mt-2 text-xs text-muted-foreground">{entry.summary}</p>
+            </div>
+          ))}
+        </div>
 
         <p className="text-xs text-muted-foreground text-center">
-          Showing the last 20 commits on main
+          Product updates are curated to avoid exposing private development metadata.
         </p>
       </div>
     </main>

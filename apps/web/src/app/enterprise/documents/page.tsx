@@ -167,7 +167,7 @@ function EnterpriseDocumentsContent() {
                             <span className="text-xs text-muted-foreground">{doc.owner.email}</span>
                           </div>
                         ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
+                          <span className="text-xs text-muted-foreground">-</span>
                         )}
                       </TableCell>
                     )}
@@ -185,7 +185,7 @@ function EnterpriseDocumentsContent() {
                       {'review' in doc && doc.review ? (
                         <StatusBadge status={doc.review.status} />
                       ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
+                        <span className="text-xs text-muted-foreground">-</span>
                       )}
                     </TableCell>
                   </TableRow>

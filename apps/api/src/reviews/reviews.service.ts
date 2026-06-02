@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { ClaimStatus, Prisma, ReviewStatus } from '@balance/db';
 
 import { AuditService } from '../audit/audit.service';
+import { SECURITY_AUDIT_ACTIONS } from '../audit/audit-event.constants';
 import {
   assertReviewAccessActor,
   assertReviewDecisionActor,
@@ -13,6 +14,7 @@ import {
 } from '../auth/access-policy';
 import { throwContractHttpError, throwValidationError } from '../common/contract-errors';
 import { PrismaService } from '../prisma/prisma.service';
+import { ScopedPrismaService } from '../prisma/scoped-prisma.service';
 
 function isPrismaKnownErrorCode(error: unknown, code: string): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: unknown }).code === code;
@@ -74,6 +76,7 @@ function metricReviewWhere(input: ReviewActor): Prisma.ReviewWhereInput {
 export class ReviewsService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(ScopedPrismaService) private readonly scoped: ScopedPrismaService,
     @Inject(AuditService) private readonly audit: AuditService
   ) {}
 
@@ -210,15 +213,23 @@ export class ReviewsService {
   }
 
   async getById(input: { id: string } & ReviewActor) {
-    const review = await this.prisma.review.findUnique({
-      where: { id: input.id },
+    const review = await this.scoped.findReview(
+      { id: input.actorId, role: input.actorRole, organizationId: input.organizationId },
+      input.id,
+      {
       include: {
         claim: true,
         document: { include: { fields: true } }
       }
-    });
+      }
+    );
 
-    if (!review) throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
+    if (!review) {
+      if (await this.scoped.reviewExists(input.id)) {
+        throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
+      }
+      throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
+    }
     assertReviewVisibleToActor(review, input);
 
     const auditEvents = await this.prisma.auditEvent.findMany({
@@ -277,11 +288,19 @@ export class ReviewsService {
   }
 
   async claim(input: { reviewId: string } & ReviewActor) {
-    const review = await this.prisma.review.findUnique({
-      where: { id: input.reviewId },
+    const review = await this.scoped.findReview(
+      { id: input.actorId, role: input.actorRole, organizationId: input.organizationId },
+      input.reviewId,
+      {
       include: { claim: true, document: { select: { organizationId: true } } }
-    });
-    if (!review) throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
+      }
+    );
+    if (!review) {
+      if (await this.scoped.reviewExists(input.reviewId)) {
+        throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
+      }
+      throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
+    }
     assertReviewVisibleToActor(review, input);
 
     if (review.status !== 'pending' || review.claim.status !== 'submitted') {
@@ -352,6 +371,17 @@ export class ReviewsService {
       throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
     }
 
+    const actor = { id: input.actorId, role: input.actorRole, organizationId: input.organizationId };
+    const visibleReview = await this.scoped.findReview(actor, input.reviewId, {
+      select: { id: true }
+    });
+    if (!visibleReview) {
+      if (await this.scoped.reviewExists(input.reviewId)) {
+        throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
+      }
+      throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
+    }
+
     return await this.prisma.$transaction(async (tx) => {
       const review = await tx.review.update({
         where: { id: input.reviewId, status: 'pending' },
@@ -378,6 +408,16 @@ export class ReviewsService {
         data: { status: 'under_review' }
       });
 
+      await this.audit.writeEvent({
+        action: SECURITY_AUDIT_ACTIONS.reviewAssigned,
+        entityType: 'review',
+        entityId: review.id,
+        actor: { actorId: input.actorId, actorRole: input.actorRole },
+        message: 'Review assigned to reviewer',
+        reviewId: review.id,
+        claimId: review.claim.id
+      }, tx);
+
       return { review: { id: review.id, status: review.status, reviewerId: review.reviewerId }, reviewer };
     });
   }
@@ -392,6 +432,17 @@ export class ReviewsService {
       throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
     }
 
+    const actor = { id: input.actorId, role: input.actorRole, organizationId: input.organizationId };
+    const visibleReview = await this.scoped.findReview(actor, input.reviewId, {
+      select: { id: true }
+    });
+    if (!visibleReview) {
+      if (await this.scoped.reviewExists(input.reviewId)) {
+        throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
+      }
+      throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
+    }
+
     return await this.prisma.$transaction(async (tx) => {
       const review = await tx.review.update({
         where: { id: input.reviewId, status: 'in_review' },
@@ -404,17 +455,35 @@ export class ReviewsService {
         data: { status: 'submitted' }
       });
 
+      await this.audit.writeEvent({
+        action: SECURITY_AUDIT_ACTIONS.reviewUnassigned,
+        entityType: 'review',
+        entityId: review.id,
+        actor: { actorId: input.actorId, actorRole: input.actorRole },
+        message: 'Review unassigned',
+        reviewId: review.id,
+        claimId: review.claim.id
+      }, tx);
+
       return { review: { id: review.id, status: review.status, reviewerId: null } };
     });
   }
 
   async approve(input: { reviewId: string; note?: string | null } & ReviewActor) {
     assertReviewDecisionActor(input);
-    const review = await this.prisma.review.findUnique({
-      where: { id: input.reviewId },
+    const review = await this.scoped.findReview(
+      { id: input.actorId, role: input.actorRole, organizationId: input.organizationId },
+      input.reviewId,
+      {
       include: { claim: true, document: true }
-    });
-    if (!review) throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
+      }
+    );
+    if (!review) {
+      if (await this.scoped.reviewExists(input.reviewId)) {
+        throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
+      }
+      throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
+    }
     assertReviewVisibleToActor(review, input);
 
     if (review.status !== 'in_review') {
@@ -446,19 +515,19 @@ export class ReviewsService {
         data: { status: 'reviewed' }
       });
 
-      return { updatedReview, updatedClaim, updatedDocument };
-    });
+      await this.audit.writeEvent({
+        action: SECURITY_AUDIT_ACTIONS.reviewApproved,
+        entityType: 'review',
+        entityId: review.id,
+        actor: { actorId: input.actorId, actorRole: input.actorRole },
+        message: 'Review approved',
+        metadata: { noteProvided: Boolean(input.note?.trim()) },
+        reviewId: review.id,
+        claimId: review.claimId,
+        documentId: review.documentId
+      }, tx);
 
-    await this.audit.writeEvent({
-      action: 'review.approved',
-      entityType: 'review',
-      entityId: review.id,
-      actor: { actorId: input.actorId, actorRole: input.actorRole },
-      message: 'Review approved',
-      metadata: { note: input.note ?? null },
-      reviewId: review.id,
-      claimId: review.claimId,
-      documentId: review.documentId
+      return { updatedReview, updatedClaim, updatedDocument };
     });
 
     return {
@@ -490,11 +559,19 @@ export class ReviewsService {
       throwValidationError([{ path: 'note', message: 'note is required' }]);
     }
 
-    const review = await this.prisma.review.findUnique({
-      where: { id: input.reviewId },
+    const review = await this.scoped.findReview(
+      { id: input.actorId, role: input.actorRole, organizationId: input.organizationId },
+      input.reviewId,
+      {
       include: { claim: true, document: true }
-    });
-    if (!review) throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
+      }
+    );
+    if (!review) {
+      if (await this.scoped.reviewExists(input.reviewId)) {
+        throwContractHttpError(403, 'FORBIDDEN', 'Forbidden', []);
+      }
+      throwContractHttpError(404, 'NOT_FOUND', 'Not found', []);
+    }
     assertReviewVisibleToActor(review, input);
 
     if (review.status !== 'in_review') {
@@ -526,19 +603,19 @@ export class ReviewsService {
         data: { status: 'rejected' }
       });
 
-      return { updatedReview, updatedClaim, updatedDocument };
-    });
+      await this.audit.writeEvent({
+        action: SECURITY_AUDIT_ACTIONS.reviewRejected,
+        entityType: 'review',
+        entityId: review.id,
+        actor: { actorId: input.actorId, actorRole: input.actorRole },
+        message: 'Review rejected',
+        metadata: { noteProvided: true },
+        reviewId: review.id,
+        claimId: review.claimId,
+        documentId: review.documentId
+      }, tx);
 
-    await this.audit.writeEvent({
-      action: 'review.rejected',
-      entityType: 'review',
-      entityId: review.id,
-      actor: { actorId: input.actorId, actorRole: input.actorRole },
-      message: 'Review rejected',
-      metadata: { note: input.note },
-      reviewId: review.id,
-      claimId: review.claimId,
-      documentId: review.documentId
+      return { updatedReview, updatedClaim, updatedDocument };
     });
 
     return {

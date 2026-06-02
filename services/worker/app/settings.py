@@ -15,6 +15,17 @@ def _env_int(name: str, fallback: int) -> int:
         return fallback
 
 
+def _env_bool(name: str, fallback: bool) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return fallback
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return fallback
+
+
 APP_ENV = _runtime_env()
 
 
@@ -35,12 +46,9 @@ EXTRACTION_QUEUE_NAME = env("EXTRACTION_QUEUE_NAME", "document_extract")
 
 DATABASE_URL = env("DATABASE_URL", "postgresql://balance:balance@postgres:5432/balance?schema=public")
 
-AWS_REGION = env("AWS_REGION", "")
 OBJECT_STORAGE_PROVIDER = env("OBJECT_STORAGE_PROVIDER", env("STORAGE_DRIVER", "filesystem")).lower()
 STORAGE_DRIVER = env("STORAGE_DRIVER", "filesystem").lower()
 STORAGE_FILESYSTEM_ROOT = env("OBJECT_STORAGE_FILESYSTEM_ROOT", env("STORAGE_FILESYSTEM_ROOT", "/data/balance-storage"))
-S3_BUCKET = env("S3_BUCKET", "")
-S3_REGION = env("S3_REGION", AWS_REGION)
 OBJECT_STORAGE_ARTIFACT_ROOT = env("OBJECT_STORAGE_ARTIFACT_ROOT", f"{STORAGE_FILESYSTEM_ROOT.rstrip('/')}/artifacts")
 
 OCR_PROVIDER = env("OCR_PROVIDER", env("EXTRACTION_PROVIDER_DEFAULT", "paddleocr")).lower()
@@ -51,8 +59,13 @@ TESSERACT_LANG = env("TESSERACT_LANG", "eng")
 PIPELINE_VERSION = env("PIPELINE_VERSION", "v0.5.0-open-ocr")
 PDF_OCR_DPI = _env_int("PDF_OCR_DPI", 300)
 PDF_MAX_PAGES = _env_int("PDF_MAX_PAGES", 3)
+OCR_MAX_PAGES_LOCAL = _env_int("OCR_MAX_PAGES_LOCAL", PDF_MAX_PAGES)
+OCR_MAX_IMAGE_PIXELS = _env_int("OCR_MAX_IMAGE_PIXELS", 50_000_000)
 
-TEXTRACT_PREPROCESS = env("TEXTRACT_PREPROCESS", "false").lower() == "true"
-TEXTRACT_SCRATCH_PREFIX = env("TEXTRACT_SCRATCH_PREFIX", "textract-scratch")
-TEXTRACT_CONFIDENCE_AUTO = _env_int("TEXTRACT_CONFIDENCE_AUTO", 90)
-TEXTRACT_CONFIDENCE_FLAG = _env_int("TEXTRACT_CONFIDENCE_FLAG", 50)
+WORKER_OTEL_ENABLED = _env_bool("WORKER_OTEL_ENABLED", True)
+WORKER_PROFILING_ENABLED = _env_bool("WORKER_PROFILING_ENABLED", True)
+WORKER_OTEL_SERVICE_NAME = env("WORKER_OTEL_SERVICE_NAME", env("OTEL_SERVICE_NAME", "balance-worker"))
+OTEL_EXPORTER_OTLP_ENDPOINT = env("OTEL_EXPORTER_OTLP_ENDPOINT", "http://alloy:4318").rstrip("/")
+OTEL_TRACES_ENDPOINT = env("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", f"{OTEL_EXPORTER_OTLP_ENDPOINT}/v1/traces")
+OTEL_LOGS_ENDPOINT = env("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", f"{OTEL_EXPORTER_OTLP_ENDPOINT}/v1/logs")
+PYROSCOPE_SERVER_ADDRESS = env("PYROSCOPE_SERVER_ADDRESS", "http://pyroscope:4040")

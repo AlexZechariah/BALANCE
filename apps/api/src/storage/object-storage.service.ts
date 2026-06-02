@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import { throwContractHttpError } from '../common/contract-errors';
+import { apiMetrics } from '../observability/metrics';
 
 import type { ObjectReference, ObjectStorageProvider } from './object-storage.types';
 import { FilesystemObjectStorageProvider } from './providers/filesystem.provider';
@@ -54,37 +55,39 @@ export class ObjectStorageService {
   }): Promise<{ storageKey: string; objectRef: ObjectReference }> {
     const storageKey = this.buildDocumentStorageKey(input.documentId, input.contentType);
 
-    try {
-      const objectRef = await this.provider.putObject({
-        key: storageKey,
-        body: input.body,
-        contentType: input.contentType,
-        originalFilename: input.originalFilename
-      });
-      return { storageKey, objectRef };
-    } catch (err) {
-      this.logger.error(
-        `Storage putObject failed (provider=${this.provider.provider}, key=${storageKey})`,
-        err instanceof Error ? err.stack : undefined
-      );
-      throwContractHttpError(503, 'SERVICE_UNAVAILABLE', 'Storage unavailable', []);
-    }
+    return apiMetrics.observeStorage('put', this.provider.provider, async () => {
+      try {
+        const objectRef = await this.provider.putObject({
+          key: storageKey,
+          body: input.body,
+          contentType: input.contentType,
+          originalFilename: input.originalFilename
+        });
+        return { storageKey, objectRef };
+      } catch (err) {
+        this.logger.error(
+          `Storage putObject failed (provider=${this.provider.provider}, error=${err instanceof Error ? err.name : 'unknown'})`
+        );
+        throwContractHttpError(503, 'SERVICE_UNAVAILABLE', 'Storage unavailable', []);
+      }
+    });
   }
 
   async getDocumentFile(input: { storageKey: string; expectedContentType: string }): Promise<{ body: Buffer; contentType: string }> {
-    try {
-      const result = await this.provider.getObject(input.storageKey);
-      return {
-        body: result.body,
-        contentType: result.contentType || input.expectedContentType
-      };
-    } catch (err) {
-      this.logger.error(
-        `Storage getObject failed (provider=${this.provider.provider}, key=${input.storageKey})`,
-        err instanceof Error ? err.stack : undefined
-      );
-      throwContractHttpError(404, 'NOT_FOUND', 'Document file not found', []);
-    }
+    return apiMetrics.observeStorage('get', this.provider.provider, async () => {
+      try {
+        const result = await this.provider.getObject(input.storageKey);
+        return {
+          body: result.body,
+          contentType: result.contentType || input.expectedContentType
+        };
+      } catch (err) {
+        this.logger.error(
+          `Storage getObject failed (provider=${this.provider.provider}, error=${err instanceof Error ? err.name : 'unknown'})`
+        );
+        throwContractHttpError(404, 'NOT_FOUND', 'Document file not found', []);
+      }
+    });
   }
 
   async describeDocumentFile(input: {
@@ -92,29 +95,31 @@ export class ObjectStorageService {
     expectedContentType: string;
     originalFilename?: string | null;
   }): Promise<ObjectReference> {
-    try {
-      const result = await this.provider.statObject(input.storageKey);
-      return {
-        ...result,
-        originalFilename: input.originalFilename ?? null,
-        contentType: result.contentType || input.expectedContentType
-      };
-    } catch (err) {
-      this.logger.error(
-        `Storage statObject failed (provider=${this.provider.provider}, key=${input.storageKey})`,
-        err instanceof Error ? err.stack : undefined
-      );
-      throwContractHttpError(404, 'NOT_FOUND', 'Document file not found', []);
-    }
+    return apiMetrics.observeStorage('stat', this.provider.provider, async () => {
+      try {
+        const result = await this.provider.statObject(input.storageKey);
+        return {
+          ...result,
+          originalFilename: input.originalFilename ?? null,
+          contentType: result.contentType || input.expectedContentType
+        };
+      } catch (err) {
+        this.logger.error(
+          `Storage statObject failed (provider=${this.provider.provider}, error=${err instanceof Error ? err.name : 'unknown'})`
+        );
+        throwContractHttpError(404, 'NOT_FOUND', 'Document file not found', []);
+      }
+    });
   }
 
   async deleteDocumentFile(storageKey: string): Promise<void> {
     try {
-      await this.provider.deleteObject(storageKey);
+      await apiMetrics.observeStorage('delete', this.provider.provider, async () => {
+        await this.provider.deleteObject(storageKey);
+      });
     } catch (err) {
       this.logger.warn(
-        `Failed to delete storage object (provider=${this.provider.provider}, key=${storageKey})`,
-        err instanceof Error ? err.stack : undefined
+        `Failed to delete storage object (provider=${this.provider.provider}, error=${err instanceof Error ? err.name : 'unknown'})`
       );
     }
   }

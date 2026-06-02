@@ -65,7 +65,7 @@ export function DeploymentStatusCard() {
         <div>
           <p className="text-xs text-slate-500 mb-0.5">Last checked</p>
           <p className="text-xs text-slate-400">
-            {status.lastCheckedAt ? new Date(status.lastCheckedAt).toLocaleTimeString() : '—'}
+            {status.lastCheckedAt ? new Date(status.lastCheckedAt).toLocaleTimeString() : '-'}
           </p>
         </div>
       </div>

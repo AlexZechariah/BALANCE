@@ -7,6 +7,7 @@ import type { AuthUser } from './api/auth';
 const currentAdmin: AuthUser = {
   id: 'admin-1',
   email: 'admin@balance.local',
+  emailVerifiedAt: '2026-01-01T00:00:00.000Z',
   role: 'admin',
   displayName: 'Org Admin',
   organizationId: 'org-1'
@@ -16,6 +17,7 @@ function member(id: string, role: AuthUser['role']): AuthUser {
   return {
     id,
     email: `${id}@balance.local`,
+    emailVerifiedAt: '2026-01-01T00:00:00.000Z',
     role,
     displayName: id,
     organizationId: 'org-1'
@@ -45,10 +47,9 @@ describe('role routing and permission helpers', () => {
     expect(canDeleteEnterpriseMember(currentAdmin, currentAdmin)).toBe(false);
   });
 
-  it('matches member password validation to registration complexity', () => {
-    expect(validatePasswordComplexity('password')).toContain('uppercase');
-    expect(validatePasswordComplexity('Password')).toContain('digit');
-    expect(validatePasswordComplexity('Password1')).toContain('special');
-    expect(validatePasswordComplexity('ValidPass1!')).toBeNull();
+  it('matches member password validation to the shared account password policy', () => {
+    expect(validatePasswordComplexity('short password')).toContain('at least 15');
+    expect(validatePasswordComplexity('balance password')).toContain('too common');
+    expect(validatePasswordComplexity('valid local passphrase 1')).toBeNull();
   });
 });
